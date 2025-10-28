@@ -12,19 +12,22 @@ mp.mp.dps = 25
 # ----------------------
 # Absolute path where output directories should be created
 # Change this to your desired output location
-base_path = "/path/to/output"
+base_path = "./test"
+
+# Output name
+my_tag = "20251027"
 
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms
 a = mp.mpf('2.257')
 b = mp.mpf('1.385')
-c = mp.mpf('0.753')
+c = mp.mpf('0.6')
 # my_mass_norm is the normalized baryon mass, M_b/(4*pi*rho_s*r_s^3)
-my_mass_norm = mp.mpf('0.1')
+my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
 my_scale_norm = mp.mpf('0.1')
 # my_sigma is the normalized SIDM cross section (sigma/m)*rho_s*r_s
-my_sigma = mp.mpf('0.5')
+my_sigma = mp.mpf('0.0521')
 
 # 1D Lagragian zone parameters
 r_min = mp.mpf('0.005')  # default 10^-4
@@ -32,9 +35,6 @@ r_max = mp.mpf('500.0')  # default 10^2
 layer = 150
 # extra_layers are added to the end of the list to ensure a smooth 1D velocity dispersion profile
 extra_layer = 10
-
-# Output name
-my_tag = "2025xxxx"
 
 #----------------------
 # Define all the dimensionless density and mass functions
