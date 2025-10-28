@@ -79,6 +79,8 @@ public:
     double b;
     double c;
     double sigma;
+    double dis_ratio;
+    double v_loss;
 
     // Baryon enclosed mass function parameters（必须从 Basic 赋值）
     double mass_norm;
@@ -108,6 +110,8 @@ public:
         logger.info("Cross section (sigma): " + std::to_string(sigma));
         logger.info("Conduction parameter (a, b, c): " + std::to_string(a) + ", " 
                  + std::to_string(b) + ", " + std::to_string(c));
+        logger.info("Cooling parameter (sigma'/sigma, v_loss): " + std::to_string(dis_ratio) + ", " 
+                 + std::to_string(v_loss));
         logger.info("Baryon parameter (mass_norm, scale_norm): " + std::to_string(mass_norm) + ", "
                  + std::to_string(scale_norm));
     }
@@ -191,6 +195,7 @@ public:
     Eigen::ArrayXd MhyList;    // Total mass (dark matter + baryon)
     Eigen::ArrayXd uList;      // Specific internal energy
     Eigen::ArrayXd LList;      // Luminosity
+    Eigen::ArrayXd CList;      // Cooling rate
     Eigen::ArrayXd vList;      // 1D Velocity dispersion
     Eigen::ArrayXd pList;      // Pressure
     Eigen::ArrayXd aList;      // Adiabatic variable
@@ -208,12 +213,14 @@ public:
             std::string nameM   = params.inputDir + "MList-"   + params.tag + ".txt";
             std::string nameu   = params.inputDir + "uList-"   + params.tag + ".txt";
             std::string nameL   = params.inputDir + "LList-"   + params.tag + ".txt";
+            std::string nameC   = params.inputDir + "CList-"   + params.tag + ".txt";
             
             RList   = fileManager.readMatrix(nameR).array();
             RhoList = fileManager.readMatrix(nameRho).array();
             MList   = fileManager.readMatrix(nameM).array();
             uList   = fileManager.readMatrix(nameu).array();
             LList   = fileManager.readMatrix(nameL).array();
+            CList   = fileManager.readMatrix(nameC).array();
             
             NoLayers = RList.rows();
             
@@ -319,7 +326,7 @@ public:
                  << "Cross section (sigma): " << params.sigma << '\n'
                  << "Conduction parameter (a, b, c): " << params.a << ", " << params.b << ", " << params.c << '\n'
                  << "Baryon parameter (massnorm, scalenorm): " << params.mass_norm << ", " << params.scale_norm << '\n'
-                 << "time, step, SIDM radius, SIDM density, SIDM enclosed mass, SIDM internal energy, SIDM luminosity" << '\n'
+                 << "time, step, SIDM radius, SIDM density, SIDM enclosed mass, SIDM internal energy, SIDM luminosity, SIDM cooling" << '\n'
                  << std::scientific << std::setprecision(10) << params.totalTime << " " << 0 << '\n'
                  << state.RList.transpose() << '\n'
                  << state.RhoList.transpose() << '\n'
@@ -373,10 +380,10 @@ private:
     double performConductionStep() {
         int NoLayers = state.NoLayers;
         
-        deltaUcoeff(0) = -(state.LList(0) / state.MList(0)) / state.uList(0);
+        deltaUcoeff(0) = - ((state.LList(0) / state.MList(0)) + state.CList(0) / state.RhoList(0) ) / state.uList(0);
         for (int i = 1; i < (NoLayers-1); i++) {
-            deltaUcoeff(i) = -((state.LList(i) - state.LList(i-1)) / 
-                              (state.MList(i) - state.MList(i-1))) / state.uList(i);
+            deltaUcoeff(i) = -((state.LList(i) - state.LList(i-1)) / (state.MList(i) - state.MList(i-1)) 
+                                + state.CList(i) / state.RhoList(i) ) / state.uList(i);
         }
         
         double deltat = params.epsilon / (deltaUcoeff.abs().maxCoeff());
@@ -575,6 +582,10 @@ private:
         double v1 = state.vList(1);
         double v1_2 = v1 * v1;
         double v1_3 = v1_2 * v1;
+        double vloss2ratio0 = params.v_loss * params.v_loss / v0_2;
+        double colcoeff = 4.0 / std::sqrt(M_PI);
+        double Rho0 = state.RhoList(0);
+        double Rho0_2 = Rho0 * Rho0;
         
         state.LList(0) = -(state.uList(1) - state.uList(0)) / state.RList(1) * 
                        R0_2 * params.a * params.b * params.c * params.sigma *
@@ -584,6 +595,7 @@ private:
                        state.RhoList(1) * v1_3 / 
                        (params.a * params.c * sigma_2 * state.RhoList(1) * 
                        v1_2 + params.b));
+        state.CList(0) = colcoeff * Rho0_2 * params.dis_ratio * params.sigma * v0_3 * vloss2ratio0 * (1 + vloss2ratio0) * std::exp(-vloss2ratio0);
         
         for (int i = 1; i < (NoLayers-1); i++) {
             double Ri = state.RList(i);
@@ -598,6 +610,10 @@ private:
             double vi1 = state.vList(i+1);
             double vi1_2 = vi1 * vi1;
             double vi1_3 = vi1_2 * vi1;
+
+            double vloss2ratioi = params.v_loss * params.v_loss / vi_2;
+            double Rhoi = state.RhoList(i);
+            double Rhoi_2 = Rhoi * Rhoi;
             
             state.LList(i) = -(state.uList(i+1) - state.uList(i)) / 
                            (Ri1 - Ri_1) * 
@@ -608,6 +624,7 @@ private:
                            state.RhoList(i+1) * vi1_3 / 
                            (params.a * params.c * sigma_2 * state.RhoList(i+1) * 
                            vi1_2 + params.b));
+            state.CList(i) = colcoeff * Rhoi_2 * params.dis_ratio * params.sigma * vi_3 * vloss2ratioi * (1 + vloss2ratioi) * std::exp(-vloss2ratioi);
         }
     }
     
@@ -618,7 +635,8 @@ private:
                  << state.RhoList.transpose() << '\n'
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
-                 << state.LList.transpose() << '\n';
+                 << state.LList.transpose() << '\n'
+                 << state.CList.transpose() << '\n';
         }
     }
 };
@@ -692,6 +710,8 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     P.sigma      = reqd("sigma");
     P.mass_norm  = reqd("baryon_plummer_mass_norm");
     P.scale_norm = reqd("baryon_plummer_ars");
+    P.dis_ratio  = reqd("dis_ratio");
+    P.v_loss     = reqd("v_loss");
 
     // derive paths from Basic location
     size_t slash = basic_path.find_last_of("/\\");

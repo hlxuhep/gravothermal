@@ -15,7 +15,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251027"
+my_tag = "20251028"
 
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms
@@ -28,6 +28,10 @@ my_mass_norm = mp.mpf('0.0')
 my_scale_norm = mp.mpf('0.1')
 # my_sigma is the normalized SIDM cross section (sigma/m)*rho_s*r_s
 my_sigma = mp.mpf('0.0521')
+# my_dis_ratio is the ratio of the inelastic and the elastic cross section (sigma'/sigma)
+my_dis_ratio = mp.mpf('1.0')
+# my_velocity_loss is the normalized nu_loss of the inelastic collision
+my_velocity_loss = mp.mpf('0.076')
 
 # 1D Lagragian zone parameters
 r_min = mp.mpf('0.005')  # default 10^-4
@@ -165,6 +169,17 @@ def luminosity_dm(r, a, b, c, sigma, mass_norm, ars):
     
     return factor * (numerator / denominator) * bd
 
+def cooling_dm(r, sigma, dis_ratio, v_loss, mass_norm, ars):
+    """Dark matter cooling rate function"""
+    r_val = mp.mpf(r)
+    
+    density = density_dm(r_val)
+    vd = vd_dm(r_val, mass_norm, ars)
+    vloss2ratio = v_loss**2 / vd**2
+    result = density**2 * sigma * dis_ratio * 4 * vd**3 * vloss2ratio / mp.sqrt(mp.pi) * (1 + vloss2ratio) * mp.exp( - vloss2ratio )
+    
+    return result
+
 # Create logarithmically spaced radius points
 def log_space(start, stop, num):
     """Create logarithmically spaced points similar to Mathematica's Subdivide"""
@@ -191,6 +206,7 @@ def calculate_lists():
     u_list = [mp.mpf('1.5') * mp.re(v)**2 for v in vd_list]
     # Calculate the dark matter luminosity
     l_list = [luminosity_dm(r, a, b, c, my_sigma, my_mass_norm, my_scale_norm) for r in r_list1]
+    c_list = [cooling_dm(r, my_sigma, my_dis_ratio, my_velocity_loss, my_mass_norm, my_scale_norm) for r in r_list2]
     
     # Truncate to extra layers
     r_list1_trunc = r_list1[:layer]
@@ -200,6 +216,7 @@ def calculate_lists():
     u_list_trunc = u_list[:layer]
     vd_list_trunc = vd_list[:layer]
     l_list_trunc = l_list[:layer]
+    c_list_trunc = c_list[:layer]
     
     # Calculate Knudsen number
     kn_list_trunc = [(1/(my_sigma * rho_list[i])) / 
@@ -214,7 +231,8 @@ def calculate_lists():
         'u_list_trunc': u_list_trunc,
         'vd_list_trunc': vd_list_trunc,
         'l_list_trunc': l_list_trunc,
-        'kn_list_trunc': kn_list_trunc
+        'kn_list_trunc': kn_list_trunc,
+        'c_list_trunc': c_list_trunc
     }
 
 def plot_results(results):
@@ -228,6 +246,7 @@ def plot_results(results):
     vd = np.array([float(mp.re(val)) for val in results['vd_list_trunc']])
     lum = np.array([float(mp.re(val)) for val in results['l_list_trunc']])
     kn = np.array([float(mp.re(val)) for val in results['kn_list_trunc']])
+    col = np.array([float(mp.re(val)) for val in results['c_list_trunc']])
     
     plt.figure(figsize=(10, 10))
     
@@ -238,6 +257,7 @@ def plot_results(results):
     plt.loglog(r1, lum, label=r'$L_{\chi}$')
     plt.loglog(r1, -lum, label=r'$-L_{\chi}$')
     plt.loglog(r2, kn, label=r'$Kn_{\chi}$')
+    plt.loglog(r2, col, label=r'$C_{\chi}$')
     
     plt.legend()
     plt.grid(True, which="both", ls="-")
@@ -269,6 +289,8 @@ def export_data(results, my_tag=None):
         f"b = {b}",
         f"c = {c}",
         f"sigma = {my_sigma}",
+        f"dis_ratio = {my_dis_ratio}",
+        f"v_loss = {my_velocity_loss}",
         "Initial dark matter profile = NFW",
         "Initial baryon profile = Plummer",
         f"rmin = {float(r_min)}",
@@ -291,6 +313,7 @@ def export_data(results, my_tag=None):
     rho_list_str = [f"{float(mp.re(rho)):.10g}" for rho in results['rho_list_trunc']] + ['']
     u_list_str = [f"{float(mp.re(u)):.10g}" for u in results['u_list_trunc']] + ['']
     l_list_str = [f"{float(mp.re(l)):.10g}" for l in results['l_list_trunc']] + ['']
+    c_list_str = [f"{float(mp.re(c)):.10g}" for c in results['c_list_trunc']] + ['']
     
     # Write data files with full paths
     r_file = os.path.join(output_dir, f"RList-{my_tag}.txt")
@@ -312,6 +335,9 @@ def export_data(results, my_tag=None):
     l_file = os.path.join(output_dir, f"LList-{my_tag}.txt")
     with open(l_file, 'w') as f:
         f.write('\n'.join(l_list_str))
+    c_file = os.path.join(output_dir, f"CList-{my_tag}.txt")
+    with open(c_file, 'w') as f:
+        f.write('\n'.join(c_list_str))
     
     return output_dir
 
