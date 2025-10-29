@@ -332,7 +332,8 @@ public:
                  << state.RhoList.transpose() << '\n'
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
-                 << state.LList.transpose() << '\n';
+                 << state.LList.transpose() << '\n'
+                 << state.CList.transpose() << '\n';
         }
         file.close();
         
