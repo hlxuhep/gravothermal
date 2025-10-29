@@ -15,7 +15,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251028r2"
+my_tag = "20251029"
 
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms

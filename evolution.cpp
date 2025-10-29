@@ -32,7 +32,7 @@ constexpr int DEFAULT_TOTAL_STEPS = 1000000000;
 constexpr int DEFAULT_SAVE_STEPS = 100;
 // default epsilon for the simulation
 // this is the maximum absolute value change in internal energy
-constexpr double DEFAULT_EPSILON = 0.01;
+constexpr double DEFAULT_EPSILON = 0.001;
 // default iteration steps for relaxation
 constexpr int DEFAULT_RELAXATION_STEPS = 10;
 // default density threshold for stopping the simulation
