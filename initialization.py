@@ -15,7 +15,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251029"
+my_tag = "20251103"
 
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms
@@ -29,7 +29,7 @@ my_scale_norm = mp.mpf('0.1')
 # my_sigma is the normalized SIDM cross section (sigma/m)*rho_s*r_s
 my_sigma = mp.mpf('0.05')
 # my_dis_ratio is the ratio of the inelastic and the elastic cross section (sigma'/sigma)
-my_dis_ratio = mp.mpf('1.0')
+my_dis_ratio = mp.mpf('0.0')
 # my_velocity_loss is the normalized nu_loss of the inelastic collision
 my_velocity_loss = mp.mpf('0.076')
 
