@@ -15,7 +15,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251103"
+my_tag = "20251104_elastic"
 
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms
@@ -27,16 +27,16 @@ my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
 my_scale_norm = mp.mpf('0.1')
 # my_sigma is the normalized SIDM cross section (sigma/m)*rho_s*r_s
-my_sigma = mp.mpf('0.05')
+my_sigma = mp.mpf('0.0521')
 # my_dis_ratio is the ratio of the inelastic and the elastic cross section (sigma'/sigma)
 my_dis_ratio = mp.mpf('0.0')
 # my_velocity_loss is the normalized nu_loss of the inelastic collision
-my_velocity_loss = mp.mpf('0.076')
+my_velocity_loss = mp.mpf('0.79')
 
 # 1D Lagragian zone parameters
-r_min = mp.mpf('0.005')  # default 10^-4
-r_max = mp.mpf('500.0')  # default 10^2
-layer = 150
+r_min = mp.mpf('0.0001')  # default 10^-4
+r_max = mp.mpf('1000.0')  # default 10^2
+layer = 250
 # extra_layers are added to the end of the list to ensure a smooth 1D velocity dispersion profile
 extra_layer = 10
 
@@ -274,7 +274,8 @@ def export_data(results, my_tag=None):
     
     # Use the base_path defined at the top of the script
     # First check if "initial" folder exists, create it if not
-    initial_dir = os.path.join(base_path, "initial")
+    # initial_dir = os.path.join(base_path, "initial")
+    initial_dir = base_path
     os.makedirs(initial_dir, exist_ok=True)
     
     # Create the date directory inside the initial folder

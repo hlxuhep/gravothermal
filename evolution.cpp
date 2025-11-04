@@ -32,7 +32,7 @@ constexpr int DEFAULT_TOTAL_STEPS = 1000000000;
 constexpr int DEFAULT_SAVE_STEPS = 100;
 // default epsilon for the simulation
 // this is the maximum absolute value change in internal energy
-constexpr double DEFAULT_EPSILON = 0.01;
+constexpr double DEFAULT_EPSILON = 0.001;
 // default iteration steps for relaxation
 constexpr int DEFAULT_RELAXATION_STEPS = 10;
 // default density threshold for stopping the simulation
@@ -108,6 +108,8 @@ public:
         logger.info("Save step: " + std::to_string(saveStep));
         logger.info("Abs(delta u/u): " + std::to_string(epsilon));
         logger.info("Cross section (sigma): " + std::to_string(sigma));
+        logger.info("dis_ratio: " + std::to_string(dis_ratio));
+        logger.info("v_loss: " + std::to_string(v_loss));
         logger.info("Conduction parameter (a, b, c): " + std::to_string(a) + ", " 
                  + std::to_string(b) + ", " + std::to_string(c));
         logger.info("Cooling parameter (sigma'/sigma, v_loss): " + std::to_string(dis_ratio) + ", " 
@@ -733,15 +735,24 @@ int main(int argc, char** argv) {
     try {
         Logger logger(false);  // Set true for debug
 
-        // Strict: must provide Basic-<tag>.txt
-        if (argc < 2) {
-            logger.error("Usage: ./evolution <path/to/Basic-<tag>.txt>");
-            logger.error("This program is strictly driven by the Basic file.");
+        // Strict: must provide Basic path *prefix* and tag
+        // Example: baseDir = "./test/initial/", tag = "20251104"
+        // Basic file path becomes "./test/initial/20251104/Basic-20251104.txt"
+        if (argc < 3) {
+            logger.error("Usage: ./evolution <basic_dir_prefix> <tag>");
+            logger.error("Example: ./evolution ./test/initial/ 20251104");
             return EXIT_FAILURE;
         }
 
+        std::string baseDir = argv[1];
+        std::string tag     = argv[2];
+        if (!baseDir.empty() && baseDir.back() != '/' && baseDir.back() != '\\') {
+            baseDir.push_back('/');
+        }
+        std::string basic_path = baseDir + tag + "/Basic-" + tag + ".txt";
+
         SimulationParameters params; // no defaults for physics; filled by Basic
-        load_from_basic(argv[1], params, logger);
+        load_from_basic(basic_path, params, logger);
 
         FileManager fileManager(logger);
 
