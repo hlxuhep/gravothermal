@@ -29,7 +29,7 @@ class Logger;
 // total step to run the simulation
 constexpr int DEFAULT_TOTAL_STEPS = 1000000000;
 // save step to save the simulation state
-constexpr int DEFAULT_SAVE_STEPS = 100;
+constexpr int DEFAULT_SAVE_STEPS = 1000;
 // default epsilon for the simulation
 // this is the maximum absolute value change in internal energy
 constexpr double DEFAULT_EPSILON = 0.001;
@@ -37,6 +37,8 @@ constexpr double DEFAULT_EPSILON = 0.001;
 constexpr int DEFAULT_RELAXATION_STEPS = 10;
 // default density threshold for stopping the simulation
 constexpr double DEFAULT_DENSITY_THRESHOLD = 1e30;
+// default age of universe to stop the simulation
+constexpr double DEFAULT_AGE_OF_UNIVERSE = 13.8;
 
 
 /**
@@ -72,7 +74,7 @@ public:
     int totalStep;
     int saveStep;
     double epsilon;
-    double totalTime;   // 可选：Basic 中的 t
+    double totalTime;
 
     // Cross section / conduction parameters（必须从 Basic 赋值）
     double a;
@@ -86,6 +88,11 @@ public:
     double mass_norm;
     double scale_norm;
 
+    // NFW scale parameters and fiducial time (必须从 Basic 赋值)
+    double r_s;
+    double rho_s;
+    double t_fid_in_gyr;
+
     // IO parameters（必须由 Basic 决定）
     std::string tag;
     std::string inputDir;
@@ -95,8 +102,11 @@ public:
         : totalStep(DEFAULT_TOTAL_STEPS),
           saveStep(DEFAULT_SAVE_STEPS),
           epsilon(DEFAULT_EPSILON),
-          totalTime(0.0) // 如果 Basic 里提供 t，会覆盖
+          totalTime(0.0)
     {
+        r_s = 0.0;
+        rho_s = 0.0;
+        t_fid_in_gyr = 0.0;
         // 重要：不再设置 a,b,c,sigma,mass_norm,scale_norm,tag,inputDir,outputFile
         // 这些都必须在 load_from_basic() 里读取并赋值
     }
@@ -116,6 +126,15 @@ public:
                  + std::to_string(v_loss));
         logger.info("Baryon parameter (mass_norm, scale_norm): " + std::to_string(mass_norm) + ", "
                  + std::to_string(scale_norm));
+        logger.info("NFW parameter (r_s, rho_s, t_fid_in_gyr): " + std::to_string(r_s) + ", "
+                 + std::to_string(rho_s) + ", " + std::to_string(t_fid_in_gyr));
+    }
+    bool checkForAgeOfUniverse(Logger& logger) const {
+        if (totalTime > DEFAULT_AGE_OF_UNIVERSE / t_fid_in_gyr) {
+            logger.info("It has been longer than the age of universe!");
+            return true;
+        }
+        return false;
     }
 };
 
@@ -361,7 +380,10 @@ public:
                     currentSaveStep = 1;
                     logger.info("Density threshold 1e6 reached! Save frequency increased to every step.");
                 }
-                if (state.checkForAbnormalState(logger)) break;
+                if (state.checkForAbnormalState(logger)) break;  // 检查是否中心密度已爆炸
+
+                if (params.checkForAgeOfUniverse(logger))
+                break;  // 检查是否已到宇宙年龄
                 
                 if ((tstep % currentSaveStep) == 0) {
                     saveResults(outputFile, tstep);
@@ -715,6 +737,9 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     P.scale_norm = reqd("baryon_plummer_ars");
     P.dis_ratio  = reqd("dis_ratio");
     P.v_loss     = reqd("v_loss");
+    P.r_s        = reqd("r_s");
+    P.rho_s      = reqd("rho_s");
+    P.t_fid_in_gyr = reqd("t_fid_in_gyr");
 
     // derive paths from Basic location
     size_t slash = basic_path.find_last_of("/\\");
@@ -727,6 +752,8 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     logger.debug("tag=" + P.tag + ", a=" + std::to_string(P.a) + ", b=" + std::to_string(P.b) +
                  ", c=" + std::to_string(P.c) + ", sigma=" + std::to_string(P.sigma) +
                  ", mass_norm=" + std::to_string(P.mass_norm) + ", scale_norm=" + std::to_string(P.scale_norm) +
+                 ", r_s=" + std::to_string(P.r_s) + ", rho_s=" + std::to_string(P.rho_s) +
+                 ", t_fid_in_gyr=" + std::to_string(P.t_fid_in_gyr) +
                  (P.totalTime!=0.0 ? (", t="+std::to_string(P.totalTime)) : ""));
 }
 

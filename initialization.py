@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime
+from tools import natural_units as nu
 
 # Set precision 
 mp.mp.dps = 25
@@ -15,7 +16,18 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251104_elastic"
+my_tag = "20251106r2"
+
+# Physical values with dimension
+rho_s     = 1.28e7 * nu.mSun / nu.kpc**3
+r_s       = 6.5 * nu.kpc
+sigma_fid = 1 / rho_s / r_s
+v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
+lumi_fid  = mp.power(4 * mp.pi * rho_s * r_s**2, 5/2) * mp.power(nu.G_Newton, 3/2)
+t_fid     = 1 / mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s)
+C_fid     = mp.power(4 * mp.pi * nu.G_Newton, 3/2) * mp.power(rho_s, 5/2) * r_s**2
+
+t_fid_in_gyr = t_fid / (1e9 * nu.year)
 
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms
@@ -27,15 +39,17 @@ my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
 my_scale_norm = mp.mpf('0.1')
 # my_sigma is the normalized SIDM cross section (sigma/m)*rho_s*r_s
-my_sigma = mp.mpf('0.0521')
+sigma_full = 3 * nu.cm**2 / nu.gram
+my_sigma = mp.mpf(sigma_full / sigma_fid)
 # my_dis_ratio is the ratio of the inelastic and the elastic cross section (sigma'/sigma)
-my_dis_ratio = mp.mpf('0.0')
+my_dis_ratio = mp.mpf('1.0')
 # my_velocity_loss is the normalized nu_loss of the inelastic collision
-my_velocity_loss = mp.mpf('0.79')
+vloss_full = 135 * nu.km / nu.sec
+my_velocity_loss = mp.mpf(vloss_full / v_fid)
 
 # 1D Lagragian zone parameters
-r_min = mp.mpf('0.0001')  # default 10^-4
-r_max = mp.mpf('1000.0')  # default 10^2
+r_min = mp.mpf('0.0005')  # default 10^-4
+r_max = mp.mpf('500.0')  # default 10^2
 layer = 250
 # extra_layers are added to the end of the list to ensure a smooth 1D velocity dispersion profile
 extra_layer = 10
@@ -299,7 +313,10 @@ def export_data(results, my_tag=None):
         f"Shell Number = {len(r_list1)}",
         f"Extra shell = {extra_layer}",
         f"baryon_Plummer_mass_norm = {float(my_mass_norm)}",
-        f"baryon_Plummer_ars = {float(my_scale_norm)}"
+        f"baryon_Plummer_ars = {float(my_scale_norm)}",
+        f"r_s = {float(r_s)}",
+        f"rho_s = {float(rho_s)}",
+        f"t_fid_in_gyr = {float(t_fid_in_gyr)}"
     ]
     
     # Write basic info
