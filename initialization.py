@@ -17,7 +17,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251106r2"
+my_tag = "20251125test"
 
 # Physical values with dimension
 rho_s     = 1.28e7 * nu.mSun / nu.kpc**3
@@ -39,24 +39,16 @@ c = mp.mpf('0.6')
 my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
 my_scale_norm = mp.mpf('0.1')
-# my_sigma is the normalized SIDM cross section (sigma/m)*rho_s*r_s
-sigma_full = 3 * nu.cm**2 / nu.gram
-my_sigma = mp.mpf(sigma_full / sigma_fid)
-# my_dis_ratio is the ratio of the inelastic and the elastic cross section (sigma'/sigma)
-# my_dis_ratio = mp.mpf('1.0')
-# my_velocity_loss is the normalized nu_loss of the inelastic collision
-# vloss_full = 135 * nu.km / nu.sec
-# my_velocity_loss = mp.mpf(vloss_full / v_fid)
 
 # The following are all the velocity-dependent parameters.
 m_chi = 1 * nu.GeV
-m_phi = 10 * nu.MeV
-g_chi = 1e-5
+m_phi = 1 * nu.MeV
+g_chi = 1e-2
 omega = m_phi / m_chi
 # omega as a velocity also needs to be converted
 my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
-sigma_0 = g_chi**4 / 4 / nu.pi / m_chi**2 / omega**4 / m_chi
+sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
 my_sigma_0 = sigma_0 / sigma_fid
 
 # 1D Lagragian zone parameters
@@ -183,80 +175,79 @@ def big_dev(r, mass_norm, ars):
 
 # We are in place to define particle physics functions.
 # differential cross section only takes the dimensionless velocity and angular terms, without the sigma at front.
-def diff_cs_ruth(v, x): # v for velocity (renormalized), x for cos\theta
-    y = v**2 / my_omega**2
+def diff_cs_ruth(v, w, x): # v for velocity (renormalized), x for cos\theta
+    y = v**2 / w**2
     return 1 / 2 / (1 + y * (1 - x) / 2)**2
 
-def diff_cs_moll(v, x):
-    y = v**2 / my_omega**2
+def diff_cs_moll(v, w, x):
+    y = v**2 / w**2
     top  = (3 * x**2 + 1) * y**2 + 4 * y + 4
     down = ( (1 - x**2) * y**2 + 4 * y + 4 )**2
     return top / down
 
-def I_ruth(v):
-    y = v**2 / my_omega**2
-    return 4 * ((2+y)*mp.log(1+y) - 2*y ) / y**3
+def tot_cs_ruth(v, w): # total cross section but without sigma at front
+    v_mp = mp.mpf(v)
+    w_mp = mp.mpf(w)
+    y = v_mp**2 / w_mp**2
+    return 1 / (1+y)
 
-def I_moll(v):
-    y = v**2 / my_omega**2
-    top = 2 * ( 2 * (y**2 + 5 * y + 5) * mp.log(1+y) - 5*(y**2+2*y) )
+def tot_cs_moll(v, w):
+    v_mp = mp.mpf(v)
+    w_mp = mp.mpf(w)
+    y = v_mp**2 / w_mp**2
+    return 1 / (1 + y) - 1 / (y**2 + 2 * y) * mp.log(1 + y)
+
+def I_ruth(v, w): # angular integral of cross section with weight of sin^2(theta)
+    v_mp = mp.mpf(v)
+    w_mp = mp.mpf(w)
+    y = v_mp**2 / w_mp**2
+    return 4 * ((2 + y) * mp.log(1 + y) - 2 * y) / y**3
+
+def I_moll(v, w):
+    v_mp = mp.mpf(v)
+    w_mp = mp.mpf(w)
+    y = v_mp**2 / w_mp**2
+    top = 2 * (2 * (y**2 + 5 * y + 5) * mp.log(1 + y) - 5 * (y**2 + 2 * y))
     down = y**3 * (2 + y)
     return top / down
-    
-def big_int(vd, N=40, cs_type="ruth"):
+
+def big_int(vd, w, N=40, cs_type="ruth"):
     # Gauss-Laguerre nodes and weights for ∫_0^∞ e^{-x} f(x) dx
-    x, wL = laggauss(N)
-    # Map to relative velocity v_rel = 2 vd sqrt(x)
-    v = 2.0 * vd * mp.sqrt(x)
+    x, wL = laggauss(N)  
 
-    if cs_type == "ruth":
-        Isig = I_ruth(v)
-    elif cs_type == "moll":
-        Isig = I_moll(v)
-    else:
-        raise ValueError(f"Unknown cs_type '{cs_type}'. Use 'ruth' or 'moll'.")
+    vd_mp = mp.mpf(vd)
+    w_mp = mp.mpf(w)
 
-    # Integrand f(x) = x^3 * I(v_rel)
-    f = x**3 * Isig
-    return 128 * np.sum(wL * f)
+    total = mp.mpf('0.0')
+    for xi, wi in zip(x, wL):
+        x_mp = mp.mpf(xi)
+        wL_mp = mp.mpf(wi)
+        v_rel = 2 * vd_mp * mp.sqrt(x_mp)
 
-#def luminosity_dm(r, a, b, c, sigma, mass_norm, ars):
-#    """Dark matter luminosity function"""
-#    r_val = mp.mpf(r)
-#    
-#    density = density_dm(r_val)
-#    vd = vd_dm(r_val, mass_norm, ars)
-#    bd = big_dev(r_val, mass_norm, ars)
-#    
-#    factor = -(3/2) * r_val**2
-#    numerator = a * b * c * sigma * density * vd**3
-#    denominator = a * c * sigma**2 * density * vd**2 + b
-#    
-#    return factor * (numerator / denominator) * bd
+        if cs_type == "ruth":
+            Isig = I_ruth(v_rel, w_mp)
+        elif cs_type == "moll":
+            Isig = I_moll(v_rel, w_mp)
+        else:
+            raise ValueError(f"Unknown cs_type '{cs_type}'. Use 'ruth' or 'moll'.")
+
+        f = x_mp**3 * Isig
+        total += wL_mp * f
+
+    return 128 * total
 
 # Velocity-Dependent conductivity and lumonosity
-def luminosity_dm(r, a, c, my_sigma_0, mass_norm, ars):
+def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type = "ruth"):
     """Dark matter luminosity function"""
     r_val = mp.mpf(r)
     
     density = density_dm(r_val)
     vd = vd_dm(r_val, mass_norm, ars)
     bd = big_dev(r_val, mass_norm, ars)
-    bi = big_int(vd)
+    bi = big_int(vd, w, cs_type=cs_type)
     smfp = 600 * mp.sqrt(mp.pi) * vd / my_sigma_0 / bi
     lmfp = 3 / 2 * a * c * density * vd**3 * my_sigma_0 * bi / 512
     return smfp * lmfp / (smfp + lmfp) * bd
-
-def cooling_dm(r, sigma, dis_ratio, v_loss, mass_norm, ars):
-    """Dark matter cooling rate function"""
-    r_val = mp.mpf(r)
-    
-    density = density_dm(r_val)
-    vd = vd_dm(r_val, mass_norm, ars)
-    vloss2ratio = v_loss**2 / vd**2
-    result = density**2 * sigma * dis_ratio * 4 * vd**3 * vloss2ratio / mp.sqrt(mp.pi) * (1 + vloss2ratio) * mp.exp( - vloss2ratio )
-    
-    return result
 
 # Create logarithmically spaced radius points
 def log_space(start, stop, num):
@@ -283,8 +274,8 @@ def calculate_lists():
     # Calculate specific kinetic energy 
     u_list = [mp.mpf('1.5') * mp.re(v)**2 for v in vd_list]
     # Calculate the dark matter luminosity
-    l_list = [luminosity_dm(r, a, b, c, my_sigma, my_mass_norm, my_scale_norm) for r in r_list1]
-    c_list = [cooling_dm(r, my_sigma, my_dis_ratio, my_velocity_loss, my_mass_norm, my_scale_norm) for r in r_list2]
+    l_list = [luminosity_dm(r, a, c, my_sigma_0, my_omega, my_mass_norm, my_scale_norm) for r in r_list1]
+    # c_list = [cooling_dm(r, my_sigma, my_dis_ratio, my_velocity_loss, my_mass_norm, my_scale_norm) for r in r_list2]
     
     # Truncate to extra layers
     r_list1_trunc = r_list1[:layer]
@@ -294,10 +285,10 @@ def calculate_lists():
     u_list_trunc = u_list[:layer]
     vd_list_trunc = vd_list[:layer]
     l_list_trunc = l_list[:layer]
-    c_list_trunc = c_list[:layer]
+    # c_list_trunc = c_list[:layer]
     
     # Calculate Knudsen number
-    kn_list_trunc = [(1/(my_sigma * rho_list[i])) / 
+    kn_list_trunc = [(1/(tot_cs_ruth(vd_list[i], my_omega) * rho_list[i])) / 
                      mp.sqrt((2 * u_list[i]) / (3 * rho_list[i])) 
                      for i in range(layer)]
     
@@ -309,8 +300,8 @@ def calculate_lists():
         'u_list_trunc': u_list_trunc,
         'vd_list_trunc': vd_list_trunc,
         'l_list_trunc': l_list_trunc,
-        'kn_list_trunc': kn_list_trunc,
-        'c_list_trunc': c_list_trunc
+        'kn_list_trunc': kn_list_trunc
+        #'c_list_trunc': c_list_trunc
     }
 
 def plot_results(results):
@@ -324,7 +315,7 @@ def plot_results(results):
     vd = np.array([float(mp.re(val)) for val in results['vd_list_trunc']])
     lum = np.array([float(mp.re(val)) for val in results['l_list_trunc']])
     kn = np.array([float(mp.re(val)) for val in results['kn_list_trunc']])
-    col = np.array([float(mp.re(val)) for val in results['c_list_trunc']])
+    # col = np.array([float(mp.re(val)) for val in results['c_list_trunc']])
     
     plt.figure(figsize=(10, 10))
     
@@ -335,7 +326,7 @@ def plot_results(results):
     plt.loglog(r1, lum, label=r'$L_{\chi}$')
     plt.loglog(r1, -lum, label=r'$-L_{\chi}$')
     plt.loglog(r2, kn, label=r'$Kn_{\chi}$')
-    plt.loglog(r2, col, label=r'$C_{\chi}$')
+    # plt.loglog(r2, col, label=r'$C_{\chi}$')
     
     plt.legend()
     plt.grid(True, which="both", ls="-")
@@ -365,11 +356,7 @@ def export_data(results, my_tag=None):
         f"name = {my_tag}",
         "t = 0",
         f"a = {a}",
-        f"b = {b}",
         f"c = {c}",
-        f"sigma = {my_sigma}",
-        f"dis_ratio = {my_dis_ratio}",
-        f"v_loss = {my_velocity_loss}",
         "Initial dark matter profile = NFW",
         "Initial baryon profile = Plummer",
         f"rmin = {float(r_min)}",
@@ -395,7 +382,7 @@ def export_data(results, my_tag=None):
     rho_list_str = [f"{float(mp.re(rho)):.10g}" for rho in results['rho_list_trunc']] + ['']
     u_list_str = [f"{float(mp.re(u)):.10g}" for u in results['u_list_trunc']] + ['']
     l_list_str = [f"{float(mp.re(l)):.10g}" for l in results['l_list_trunc']] + ['']
-    c_list_str = [f"{float(mp.re(c)):.10g}" for c in results['c_list_trunc']] + ['']
+    # c_list_str = [f"{float(mp.re(c)):.10g}" for c in results['c_list_trunc']] + ['']
     
     # Write data files with full paths
     r_file = os.path.join(output_dir, f"RList-{my_tag}.txt")
@@ -417,9 +404,9 @@ def export_data(results, my_tag=None):
     l_file = os.path.join(output_dir, f"LList-{my_tag}.txt")
     with open(l_file, 'w') as f:
         f.write('\n'.join(l_list_str))
-    c_file = os.path.join(output_dir, f"CList-{my_tag}.txt")
-    with open(c_file, 'w') as f:
-        f.write('\n'.join(c_list_str))
+#    c_file = os.path.join(output_dir, f"CList-{my_tag}.txt")
+#    with open(c_file, 'w') as f:
+#        f.write('\n'.join(c_list_str))
     
     return output_dir
 
