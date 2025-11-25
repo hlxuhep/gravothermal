@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import os
 from datetime import datetime
 from tools import natural_units as nu
+from numpy.polynomial.laguerre import laggauss
 
 # Set precision 
 mp.mp.dps = 25
@@ -32,7 +33,7 @@ t_fid_in_gyr = t_fid / (1e9 * nu.year)
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms
 a = mp.mpf('2.257')
-b = mp.mpf('1.385')
+# b = mp.mpf('1.385')
 c = mp.mpf('0.6')
 # my_mass_norm is the normalized baryon mass, M_b/(4*pi*rho_s*r_s^3)
 my_mass_norm = mp.mpf('0.0')
@@ -42,10 +43,21 @@ my_scale_norm = mp.mpf('0.1')
 sigma_full = 3 * nu.cm**2 / nu.gram
 my_sigma = mp.mpf(sigma_full / sigma_fid)
 # my_dis_ratio is the ratio of the inelastic and the elastic cross section (sigma'/sigma)
-my_dis_ratio = mp.mpf('1.0')
+# my_dis_ratio = mp.mpf('1.0')
 # my_velocity_loss is the normalized nu_loss of the inelastic collision
-vloss_full = 135 * nu.km / nu.sec
-my_velocity_loss = mp.mpf(vloss_full / v_fid)
+# vloss_full = 135 * nu.km / nu.sec
+# my_velocity_loss = mp.mpf(vloss_full / v_fid)
+
+# The following are all the velocity-dependent parameters.
+m_chi = 1 * nu.GeV
+m_phi = 10 * nu.MeV
+g_chi = 1e-5
+omega = m_phi / m_chi
+# omega as a velocity also needs to be converted
+my_omega = omega / v_fid
+# sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
+sigma_0 = g_chi**4 / 4 / nu.pi / m_chi**2 / omega**4 / m_chi
+my_sigma_0 = sigma_0 / sigma_fid
 
 # 1D Lagragian zone parameters
 r_min = mp.mpf('0.0005')  # default 10^-4
@@ -169,19 +181,71 @@ def big_dev(r, mass_norm, ars):
     
     return result
 
-def luminosity_dm(r, a, b, c, sigma, mass_norm, ars):
+# We are in place to define particle physics functions.
+# differential cross section only takes the dimensionless velocity and angular terms, without the sigma at front.
+def diff_cs_ruth(v, x): # v for velocity (renormalized), x for cos\theta
+    y = v**2 / my_omega**2
+    return 1 / 2 / (1 + y * (1 - x) / 2)**2
+
+def diff_cs_moll(v, x):
+    y = v**2 / my_omega**2
+    top  = (3 * x**2 + 1) * y**2 + 4 * y + 4
+    down = ( (1 - x**2) * y**2 + 4 * y + 4 )**2
+    return top / down
+
+def I_ruth(v):
+    y = v**2 / my_omega**2
+    return 4 * ((2+y)*mp.log(1+y) - 2*y ) / y**3
+
+def I_moll(v):
+    y = v**2 / my_omega**2
+    top = 2 * ( 2 * (y**2 + 5 * y + 5) * mp.log(1+y) - 5*(y**2+2*y) )
+    down = y**3 * (2 + y)
+    return top / down
+    
+def big_int(vd, N=40, cs_type="ruth"):
+    # Gauss-Laguerre nodes and weights for ∫_0^∞ e^{-x} f(x) dx
+    x, wL = laggauss(N)
+    # Map to relative velocity v_rel = 2 vd sqrt(x)
+    v = 2.0 * vd * mp.sqrt(x)
+
+    if cs_type == "ruth":
+        Isig = I_ruth(v)
+    elif cs_type == "moll":
+        Isig = I_moll(v)
+    else:
+        raise ValueError(f"Unknown cs_type '{cs_type}'. Use 'ruth' or 'moll'.")
+
+    # Integrand f(x) = x^3 * I(v_rel)
+    f = x**3 * Isig
+    return 128 * np.sum(wL * f)
+
+#def luminosity_dm(r, a, b, c, sigma, mass_norm, ars):
+#    """Dark matter luminosity function"""
+#    r_val = mp.mpf(r)
+#    
+#    density = density_dm(r_val)
+#    vd = vd_dm(r_val, mass_norm, ars)
+#    bd = big_dev(r_val, mass_norm, ars)
+#    
+#    factor = -(3/2) * r_val**2
+#    numerator = a * b * c * sigma * density * vd**3
+#    denominator = a * c * sigma**2 * density * vd**2 + b
+#    
+#    return factor * (numerator / denominator) * bd
+
+# Velocity-Dependent conductivity and lumonosity
+def luminosity_dm(r, a, c, my_sigma_0, mass_norm, ars):
     """Dark matter luminosity function"""
     r_val = mp.mpf(r)
     
     density = density_dm(r_val)
     vd = vd_dm(r_val, mass_norm, ars)
     bd = big_dev(r_val, mass_norm, ars)
-    
-    factor = -(3/2) * r_val**2
-    numerator = a * b * c * sigma * density * vd**3
-    denominator = a * c * sigma**2 * density * vd**2 + b
-    
-    return factor * (numerator / denominator) * bd
+    bi = big_int(vd)
+    smfp = 600 * mp.sqrt(mp.pi) * vd / my_sigma_0 / bi
+    lmfp = 3 / 2 * a * c * density * vd**3 * my_sigma_0 * bi / 512
+    return smfp * lmfp / (smfp + lmfp) * bd
 
 def cooling_dm(r, sigma, dis_ratio, v_loss, mass_norm, ars):
     """Dark matter cooling rate function"""
