@@ -375,6 +375,7 @@ def export_data(results, my_tag=None):
         "t = 0",
         f"a = {a}",
         f"c = {c}",
+        f"sigma = {my_sigma_0}",
         "Initial dark matter profile = NFW",
         "Initial baryon profile = Plummer",
         f"rmin = {float(r_min)}",
