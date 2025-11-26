@@ -17,9 +17,10 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251125test"
+my_tag = "20251126test"
 
 # Physical values with dimension
+# '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
 rho_s     = 1.28e7 * nu.mSun / nu.kpc**3
 r_s       = 6.5 * nu.kpc
 sigma_fid = 1 / rho_s / r_s
@@ -43,12 +44,13 @@ my_scale_norm = mp.mpf('0.1')
 # The following are all the velocity-dependent parameters.
 m_chi = 1 * nu.GeV
 m_phi = 1 * nu.MeV
-g_chi = 1e-2
 omega = m_phi / m_chi
 # omega as a velocity also needs to be converted
 my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
-sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
+# g_chi = 1e-2
+# sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
+sigma_0 = 3 * nu.cm**2 / nu.gram
 my_sigma_0 = sigma_0 / sigma_fid
 
 # 1D Lagragian zone parameters
@@ -201,40 +203,44 @@ def I_ruth(v, w): # angular integral of cross section with weight of sin^2(theta
     v_mp = mp.mpf(v)
     w_mp = mp.mpf(w)
     y = v_mp**2 / w_mp**2
+    if abs(y) < mp.mpf(1e-4):
+        return (mp.mpf(2/3)
+                - mp.mpf(2/3) * y
+                + mp.mpf(3/5) * y**2)
     return 4 * ((2 + y) * mp.log(1 + y) - 2 * y) / y**3
 
 def I_moll(v, w):
     v_mp = mp.mpf(v)
     w_mp = mp.mpf(w)
     y = v_mp**2 / w_mp**2
+    if abs(y) < mp.mpf(1e-4):
+        return (mp.mpf(1/3)
+                - mp.mpf(1/3) * y
+                + mp.mpf(1/3) * y**2
+                - mp.mpf(1/3) * y**3)
     top = 2 * (2 * (y**2 + 5 * y + 5) * mp.log(1 + y) - 5 * (y**2 + 2 * y))
     down = y**3 * (2 + y)
     return top / down
 
-def big_int(vd, w, N=40, cs_type="ruth"):
-    # Gauss-Laguerre nodes and weights for ∫_0^∞ e^{-x} f(x) dx
-    x, wL = laggauss(N)  
-
+def big_int(vd, w , cs_type="ruth"):
     vd_mp = mp.mpf(vd)
     w_mp = mp.mpf(w)
 
-    total = mp.mpf('0.0')
-    for xi, wi in zip(x, wL):
-        x_mp = mp.mpf(xi)
-        wL_mp = mp.mpf(wi)
+    def integrand(x):
+        x_mp = mp.mpf(x)
         v_rel = 2 * vd_mp * mp.sqrt(x_mp)
-
         if cs_type == "ruth":
             Isig = I_ruth(v_rel, w_mp)
         elif cs_type == "moll":
             Isig = I_moll(v_rel, w_mp)
         else:
             raise ValueError(f"Unknown cs_type '{cs_type}'. Use 'ruth' or 'moll'.")
-
-        f = x_mp**3 * Isig
-        total += wL_mp * f
-
-    return 128 * total
+        
+        return x_mp**3 * Isig * mp.e**(-x_mp)
+    
+    # 用 mp.quad 在 [0, ∞) 上积分
+    integral_val = mp.quad(integrand, [0, mp.inf])
+    return 128 * integral_val
 
 # Velocity-Dependent conductivity and lumonosity
 def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type = "ruth"):
@@ -247,7 +253,7 @@ def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type = "ruth"):
     bi = big_int(vd, w, cs_type=cs_type)
     smfp = 600 * mp.sqrt(mp.pi) * vd / my_sigma_0 / bi
     lmfp = 3 / 2 * a * c * density * vd**3 * my_sigma_0 * bi / 512
-    return smfp * lmfp / (smfp + lmfp) * bd
+    return (-1) * smfp * lmfp / (smfp + lmfp) * bd
 
 # Create logarithmically spaced radius points
 def log_space(start, stop, num):
