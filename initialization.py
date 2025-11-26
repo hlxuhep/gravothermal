@@ -253,7 +253,7 @@ def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type = "ruth"):
     bi = big_int(vd, w, cs_type=cs_type)
     smfp = 600 * mp.sqrt(mp.pi) * vd / my_sigma_0 / bi
     lmfp = 3 / 2 * a * c * density * vd**3 * my_sigma_0 * bi / 512
-    return (-1) * smfp * lmfp / (smfp + lmfp) * bd
+    return (-1) * smfp * lmfp / (smfp + lmfp) * bd     # DON'T FORGET THE MINUS SIGN!!!
 
 # Create logarithmically spaced radius points
 def log_space(start, stop, num):
@@ -297,7 +297,17 @@ def calculate_lists():
     kn_list_trunc = [(1/(tot_cs_ruth(vd_list[i], my_omega) * rho_list[i])) / 
                      mp.sqrt((2 * u_list[i]) / (3 * rho_list[i])) 
                      for i in range(layer)]
-    
+
+    # Precompute big_int on a velocity grid:
+    # vd in units of v_fid, ranging from 1e-2 * v_fid to 1e2 * v_fid (dimensionless 1e-2 to 1e2)
+    v_min = mp.mpf('1e-2')
+    v_max = mp.mpf('1e2')
+    n_v_big = 200  # number of sample points for big_int(vd)
+
+    # vdi = vd for big integral
+    vdi_big_list = log_space(v_min, v_max, n_v_big)
+    bi_big_list  = [big_int(vd, my_omega, cs_type="ruth") for vd in vdi_big_list]
+
     return {
         'r_list1_trunc': r_list1_trunc,
         'r_list2_trunc': r_list2_trunc,
@@ -306,7 +316,9 @@ def calculate_lists():
         'u_list_trunc': u_list_trunc,
         'vd_list_trunc': vd_list_trunc,
         'l_list_trunc': l_list_trunc,
-        'kn_list_trunc': kn_list_trunc
+        'kn_list_trunc': kn_list_trunc,
+        'vdi_big_list': vdi_big_list,
+        'bi_big_list': bi_big_list
         #'c_list_trunc': c_list_trunc
     }
 
@@ -388,6 +400,11 @@ def export_data(results, my_tag=None):
     rho_list_str = [f"{float(mp.re(rho)):.10g}" for rho in results['rho_list_trunc']] + ['']
     u_list_str = [f"{float(mp.re(u)):.10g}" for u in results['u_list_trunc']] + ['']
     l_list_str = [f"{float(mp.re(l)):.10g}" for l in results['l_list_trunc']] + ['']
+
+    # big integral (bi) calculated at vd points:
+    vdi_list_str = [f"{float(mp.re(vdi)):.10g}" for vdi in results['vdi_big_list']] + ['']
+    bi_list_str = [f"{float(mp.re(l)):.10g}" for l in results['bi_big_list']] + ['']
+
     # c_list_str = [f"{float(mp.re(c)):.10g}" for c in results['c_list_trunc']] + ['']
     
     # Write data files with full paths
@@ -410,6 +427,15 @@ def export_data(results, my_tag=None):
     l_file = os.path.join(output_dir, f"LList-{my_tag}.txt")
     with open(l_file, 'w') as f:
         f.write('\n'.join(l_list_str))
+
+    vdi_file = os.path.join(output_dir, f"vdiList-{my_tag}.txt")
+    with open(vdi_file, 'w') as f:
+        f.write('\n'.join(vdi_list_str))
+
+    bi_file = os.path.join(output_dir, f"biList-{my_tag}.txt")
+    with open(bi_file, 'w') as f:
+        f.write('\n'.join(bi_list_str))
+
 #    c_file = os.path.join(output_dir, f"CList-{my_tag}.txt")
 #    with open(c_file, 'w') as f:
 #        f.write('\n'.join(c_list_str))

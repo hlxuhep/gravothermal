@@ -78,11 +78,11 @@ public:
 
     // Cross section / conduction parameters（必须从 Basic 赋值）
     double a;
-    double b;
     double c;
-    double sigma;
-    double dis_ratio;
-    double v_loss;
+    double sigma_0;
+    double omega;
+    // double dis_ratio;
+    // double v_loss;
 
     // Baryon enclosed mass function parameters（必须从 Basic 赋值）
     double mass_norm;
@@ -107,7 +107,7 @@ public:
         r_s = 0.0;
         rho_s = 0.0;
         t_fid_in_gyr = 0.0;
-        // 重要：不再设置 a,b,c,sigma,mass_norm,scale_norm,tag,inputDir,outputFile
+        // 重要：不再设置 a,c,sigma_0,mass_norm,scale_norm,tag,inputDir,outputFile
         // 这些都必须在 load_from_basic() 里读取并赋值
     }
     
@@ -117,13 +117,12 @@ public:
         logger.info("Total step: " + std::to_string(totalStep));
         logger.info("Save step: " + std::to_string(saveStep));
         logger.info("Abs(delta u/u): " + std::to_string(epsilon));
-        logger.info("Cross section (sigma): " + std::to_string(sigma));
+        logger.info("Cross section (sigma_0): " + std::to_string(sigma_0));
+        logger.info("w = m_phi / m_chi: " + std::to_string(omega));
         logger.info("dis_ratio: " + std::to_string(dis_ratio));
         logger.info("v_loss: " + std::to_string(v_loss));
-        logger.info("Conduction parameter (a, b, c): " + std::to_string(a) + ", " 
-                 + std::to_string(b) + ", " + std::to_string(c));
-        logger.info("Cooling parameter (sigma'/sigma, v_loss): " + std::to_string(dis_ratio) + ", " 
-                 + std::to_string(v_loss));
+        logger.info("Conduction parameter (a, c): " + std::to_string(a) + ", " + std::to_string(c));
+        //logger.info("Cooling parameter (sigma'/sigma, v_loss): " + std::to_string(dis_ratio) + ", " + std::to_string(v_loss));
         logger.info("Baryon parameter (mass_norm, scale_norm): " + std::to_string(mass_norm) + ", "
                  + std::to_string(scale_norm));
         logger.info("NFW parameter (r_s, rho_s, t_fid_in_gyr): " + std::to_string(r_s) + ", "
@@ -216,7 +215,7 @@ public:
     Eigen::ArrayXd MhyList;    // Total mass (dark matter + baryon)
     Eigen::ArrayXd uList;      // Specific internal energy
     Eigen::ArrayXd LList;      // Luminosity
-    Eigen::ArrayXd CList;      // Cooling rate
+    // Eigen::ArrayXd CList;      // Cooling rate
     Eigen::ArrayXd vList;      // 1D Velocity dispersion
     Eigen::ArrayXd pList;      // Pressure
     Eigen::ArrayXd aList;      // Adiabatic variable
@@ -234,14 +233,14 @@ public:
             std::string nameM   = params.inputDir + "MList-"   + params.tag + ".txt";
             std::string nameu   = params.inputDir + "uList-"   + params.tag + ".txt";
             std::string nameL   = params.inputDir + "LList-"   + params.tag + ".txt";
-            std::string nameC   = params.inputDir + "CList-"   + params.tag + ".txt";
+            // std::string nameC   = params.inputDir + "CList-"   + params.tag + ".txt";
             
             RList   = fileManager.readMatrix(nameR).array();
             RhoList = fileManager.readMatrix(nameRho).array();
             MList   = fileManager.readMatrix(nameM).array();
             uList   = fileManager.readMatrix(nameu).array();
             LList   = fileManager.readMatrix(nameL).array();
-            CList   = fileManager.readMatrix(nameC).array();
+            // CList   = fileManager.readMatrix(nameC).array();
             
             NoLayers = RList.rows();
             
@@ -344,17 +343,17 @@ public:
                  << "Total step: " << params.totalStep << '\n'
                  << "Save step: " << params.saveStep << '\n'
                  << "Abs(delta u/u): " << params.epsilon << '\n'
-                 << "Cross section (sigma): " << params.sigma << '\n'
-                 << "Conduction parameter (a, b, c): " << params.a << ", " << params.b << ", " << params.c << '\n'
+                 << "Cross section (sigma_0): " << params.sigma_0 << '\n'
+                 << "Conduction parameter (a, c): " << params.a << " , " << params.c << '\n'
                  << "Baryon parameter (massnorm, scalenorm): " << params.mass_norm << ", " << params.scale_norm << '\n'
-                 << "time, step, SIDM radius, SIDM density, SIDM enclosed mass, SIDM internal energy, SIDM luminosity, SIDM cooling" << '\n'
+                 << "time, step, SIDM radius, SIDM density, SIDM enclosed mass, SIDM internal energy, SIDM luminosity" << '\n'
                  << std::scientific << std::setprecision(10) << params.totalTime << " " << 0 << '\n'
                  << state.RList.transpose() << '\n'
                  << state.RhoList.transpose() << '\n'
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
-                 << state.LList.transpose() << '\n'
-                 << state.CList.transpose() << '\n';
+                 << state.LList.transpose() << '\n';
+                // << state.CList.transpose() << '\n';
         }
         file.close();
         
@@ -660,8 +659,8 @@ private:
                  << state.RhoList.transpose() << '\n'
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
-                 << state.LList.transpose() << '\n'
-                 << state.CList.transpose() << '\n';
+                 << state.LList.transpose() << '\n';
+                // << state.CList.transpose() << '\n';
         }
     }
 };
@@ -732,7 +731,8 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     P.a          = reqd("a");
     P.b          = reqd("b");
     P.c          = reqd("c");
-    P.sigma      = reqd("sigma");
+    P.sigma_0    = reqd("sigma_0");
+    P.omega      = reqd("omega");
     P.mass_norm  = reqd("baryon_plummer_mass_norm");
     P.scale_norm = reqd("baryon_plummer_ars");
     P.dis_ratio  = reqd("dis_ratio");
@@ -750,7 +750,7 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
 
     logger.info("Loaded Basic: " + basic_path);
     logger.debug("tag=" + P.tag + ", a=" + std::to_string(P.a) + ", b=" + std::to_string(P.b) +
-                 ", c=" + std::to_string(P.c) + ", sigma=" + std::to_string(P.sigma) +
+                 ", c=" + std::to_string(P.c) + ", sigma_0=" + std::to_string(P.sigma_0) +
                  ", mass_norm=" + std::to_string(P.mass_norm) + ", scale_norm=" + std::to_string(P.scale_norm) +
                  ", r_s=" + std::to_string(P.r_s) + ", rho_s=" + std::to_string(P.rho_s) +
                  ", t_fid_in_gyr=" + std::to_string(P.t_fid_in_gyr) +
