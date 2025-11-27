@@ -30,15 +30,10 @@ class Logger;
 constexpr int DEFAULT_TOTAL_STEPS = 1000000000;
 // save step to save the simulation state
 constexpr int DEFAULT_SAVE_STEPS = 1000;
-// default epsilon for the simulation
-// this is the maximum absolute value change in internal energy
-constexpr double DEFAULT_EPSILON = 0.001;
 // default iteration steps for relaxation
 constexpr int DEFAULT_RELAXATION_STEPS = 10;
 // default density threshold for stopping the simulation
 constexpr double DEFAULT_DENSITY_THRESHOLD = 1e30;
-// default age of universe to stop the simulation
-constexpr double DEFAULT_AGE_OF_UNIVERSE = 13.8;
 
 
 /**
@@ -73,25 +68,19 @@ public:
     // Simulation control parameters (这些保留默认，不影响“必须由Basic驱动”的要求)
     int totalStep;
     int saveStep;
-    double epsilon;
     double totalTime;
 
-    // Cross section / conduction parameters（必须从 Basic 赋值）
+    // 必须从 Basic 赋值:
     double a;
     double c;
     double sigma_0;
     double omega;
     // double dis_ratio;
     // double v_loss;
-
-    // Baryon enclosed mass function parameters（必须从 Basic 赋值）
     double mass_norm;
     double scale_norm;
-
-    // NFW scale parameters and fiducial time (必须从 Basic 赋值)
-    double r_s;
-    double rho_s;
-    double t_fid_in_gyr;
+    double age_of_universe;
+    double epsilon;
 
     // IO parameters（必须由 Basic 决定）
     std::string tag;
@@ -101,12 +90,10 @@ public:
     SimulationParameters()
         : totalStep(DEFAULT_TOTAL_STEPS),
           saveStep(DEFAULT_SAVE_STEPS),
-          epsilon(DEFAULT_EPSILON),
+          // epsilon(DEFAULT_EPSILON),
           totalTime(0.0)
     {
-        r_s = 0.0;
-        rho_s = 0.0;
-        t_fid_in_gyr = 0.0;
+        epsilon = 0.0;
         // 重要：不再设置 a,c,sigma_0,mass_norm,scale_norm,tag,inputDir,outputFile
         // 这些都必须在 load_from_basic() 里读取并赋值
     }
@@ -119,17 +106,15 @@ public:
         logger.info("Abs(delta u/u): " + std::to_string(epsilon));
         logger.info("Cross section (sigma_0): " + std::to_string(sigma_0));
         logger.info("w = m_phi / m_chi: " + std::to_string(omega));
-        logger.info("dis_ratio: " + std::to_string(dis_ratio));
-        logger.info("v_loss: " + std::to_string(v_loss));
+        //logger.info("dis_ratio: " + std::to_string(dis_ratio));
+        //logger.info("v_loss: " + std::to_string(v_loss));
         logger.info("Conduction parameter (a, c): " + std::to_string(a) + ", " + std::to_string(c));
         //logger.info("Cooling parameter (sigma'/sigma, v_loss): " + std::to_string(dis_ratio) + ", " + std::to_string(v_loss));
         logger.info("Baryon parameter (mass_norm, scale_norm): " + std::to_string(mass_norm) + ", "
                  + std::to_string(scale_norm));
-        logger.info("NFW parameter (r_s, rho_s, t_fid_in_gyr): " + std::to_string(r_s) + ", "
-                 + std::to_string(rho_s) + ", " + std::to_string(t_fid_in_gyr));
     }
     bool checkForAgeOfUniverse(Logger& logger) const {
-        if (totalTime > DEFAULT_AGE_OF_UNIVERSE / t_fid_in_gyr) {
+        if (totalTime > age_of_universe) {
             logger.info("It has been longer than the age of universe!");
             return true;
         }
@@ -306,6 +291,9 @@ private:
     Eigen::VectorXd deltaR;
     Eigen::VectorXd deltap;
     Eigen::VectorXd deltaRho;
+    // Lookup tables for big_int(vd) (dimensionless in units of v_fid)
+    Eigen::ArrayXd vd_grid;  // vd grid
+    Eigen::ArrayXd bi_grid;  // big_int(vd) on that grid
 
 public:
     Simulator(const SimulationParameters& p, 
@@ -317,6 +305,9 @@ public:
     
     void initialize() {
         state.initialize(params, fileManager, logger);
+
+        // Load precomputed big_int(vd) lookup tables (vdiList-/biList-)
+        loadBigIntTable();
         
         int NoLayers = state.NoLayers;
         deltaUcoeff = Eigen::ArrayXd::Zero(NoLayers);
@@ -404,10 +395,10 @@ private:
     double performConductionStep() {
         int NoLayers = state.NoLayers;
         
-        deltaUcoeff(0) = - ((state.LList(0) / state.MList(0)) + state.CList(0) / state.RhoList(0) ) / state.uList(0);
+        deltaUcoeff(0) = - ((state.LList(0) / state.MList(0))) / state.uList(0); // + state.CList(0) / state.RhoList(0) 
         for (int i = 1; i < (NoLayers-1); i++) {
             deltaUcoeff(i) = -((state.LList(i) - state.LList(i-1)) / (state.MList(i) - state.MList(i-1)) 
-                                + state.CList(i) / state.RhoList(i) ) / state.uList(i);
+                               ) / state.uList(i);  // + state.CList(i) / state.RhoList(i) 
         }
         
         double deltat = params.epsilon / (deltaUcoeff.abs().maxCoeff());
@@ -599,27 +590,40 @@ private:
         
         double R0 = state.RList(0);
         double R0_2 = R0 * R0;
-        double sigma_2 = params.sigma * params.sigma;
+        // double sigma_2 = params.sigma * params.sigma;
         double v0 = state.vList(0);
         double v0_2 = v0 * v0;
         double v0_3 = v0_2 * v0;
         double v1 = state.vList(1);
         double v1_2 = v1 * v1;
         double v1_3 = v1_2 * v1;
-        double vloss2ratio0 = params.v_loss * params.v_loss / v0_2;
-        double colcoeff = 4.0 / std::sqrt(M_PI);
+        // double vloss2ratio0 = params.v_loss * params.v_loss / v0_2;
+        // double colcoeff = 4.0 / std::sqrt(M_PI);
         double Rho0 = state.RhoList(0);
-        double Rho0_2 = Rho0 * Rho0;
+        double Rho1 = state.RhoList(1);
+        // double Rho0_2 = Rho0 * Rho0;
         
-        state.LList(0) = -(state.uList(1) - state.uList(0)) / state.RList(1) * 
-                       R0_2 * params.a * params.b * params.c * params.sigma *
-                       (state.RhoList(0) * v0_3 / 
-                       (params.a * params.c * sigma_2 * state.RhoList(0) * 
-                       v0_2 + params.b) + 
-                       state.RhoList(1) * v1_3 / 
-                       (params.a * params.c * sigma_2 * state.RhoList(1) * 
-                       v1_2 + params.b));
-        state.CList(0) = colcoeff * Rho0_2 * params.dis_ratio * params.sigma * v0_3 * vloss2ratio0 * (1 + vloss2ratio0) * std::exp(-vloss2ratio0);
+        double bi_0 = bigIntInterp(v0);
+        double bi_1 = bigIntInterp(v1);
+        double smfp_0 = 600.0 * std::sqrt(M_PI) * v0 / params.sigma_0 / bi_0;
+        double smfp_1 = 600.0 * std::sqrt(M_PI) * v1 / params.sigma_0 / bi_1;
+        double lmfp_0 = 1.5 * params.a * params.c * Rho0 * v0_3 * params.sigma_0 * bi_0 / 512.0 ; 
+        double lmfp_1 = 1.5 * params.a * params.c * Rho1 * v1_3 * params.sigma_0 * bi_1 / 512.0 ;
+        // state.LList(0) = -(state.uList(1) - state.uList(0)) / state.RList(1) * 
+        //               R0_2 * params.a * params.b * params.c * params.sigma *
+        //               (state.RhoList(0) * v0_3 / 
+        //               (params.a * params.c * sigma_2 * state.RhoList(0) * 
+        //               v0_2 + params.b) + 
+        //               state.RhoList(1) * v1_3 / 
+        //               (params.a * params.c * sigma_2 * state.RhoList(1) * 
+        //               v1_2 + params.b));
+
+        state.LList(0) = - 2.0 / 3.0 * (state.uList(1) - state.uList(0)) / state.RList(1) * 
+                       R0_2 * ( 
+                        smfp_0 * lmfp_0 / (smfp_0 + lmfp_0) + smfp_1 * lmfp_1 / (smfp_1 + lmfp_1) 
+                       );
+
+        // state.CList(0) = colcoeff * Rho0_2 * params.dis_ratio * params.sigma * v0_3 * vloss2ratio0 * (1 + vloss2ratio0) * std::exp(-vloss2ratio0);
         
         for (int i = 1; i < (NoLayers-1); i++) {
             double Ri = state.RList(i);
@@ -635,20 +639,33 @@ private:
             double vi1_2 = vi1 * vi1;
             double vi1_3 = vi1_2 * vi1;
 
-            double vloss2ratioi = params.v_loss * params.v_loss / vi_2;
+            // double vloss2ratioi = params.v_loss * params.v_loss / vi_2;
             double Rhoi = state.RhoList(i);
-            double Rhoi_2 = Rhoi * Rhoi;
+            double Rhoi_1 = state.RhoList(i+1);
+            // double Rhoi_2 = Rhoi * Rhoi;
+
+            double bii = bigIntInterp(vi);
+            double bii_1 = bigIntInterp(vi1);
+            double smfpi = 600.0 * std::sqrt(M_PI) * vi / params.sigma_0 / bii;
+            double smfpi_1 = 600.0 * std::sqrt(M_PI) * vi1 / params.sigma_0 / bii_1;
+            double lmfpi = 1.5 * params.a * params.c * Rhoi * vi_3 * params.sigma_0 * bii / 512.0 ; 
+            double lmfpi_1 = 1.5 * params.a * params.c * Rhoi_1 * vi1_3 * params.sigma_0 * bii_1 / 512.0 ;
             
-            state.LList(i) = -(state.uList(i+1) - state.uList(i)) / 
-                           (Ri1 - Ri_1) * 
-                           Ri_2 * params.a * params.b * params.c * params.sigma *
-                           (state.RhoList(i) * vi_3 / 
-                           (params.a * params.c * sigma_2 * state.RhoList(i) * 
-                           vi_2 + params.b) + 
-                           state.RhoList(i+1) * vi1_3 / 
-                           (params.a * params.c * sigma_2 * state.RhoList(i+1) * 
-                           vi1_2 + params.b));
-            state.CList(i) = colcoeff * Rhoi_2 * params.dis_ratio * params.sigma * vi_3 * vloss2ratioi * (1 + vloss2ratioi) * std::exp(-vloss2ratioi);
+            //state.LList(i) = -(state.uList(i+1) - state.uList(i)) / 
+            //               (Ri1 - Ri_1) * 
+            //               Ri_2 * params.a * params.b * params.c * params.sigma *
+            //               (state.RhoList(i) * vi_3 / 
+            //               (params.a * params.c * sigma_2 * state.RhoList(i) * 
+            //               vi_2 + params.b) + 
+            //               state.RhoList(i+1) * vi1_3 / 
+            //               (params.a * params.c * sigma_2 * state.RhoList(i+1) * 
+            //               vi1_2 + params.b));
+
+            state.LList(i) = - 2.0 / 3.0 * (state.uList(i+1) - state.uList(i)) / (Ri1 - Ri_1) * Ri_2 * ( 
+                        smfpi * lmfpi / (smfpi + lmfpi) + smfpi_1 * lmfpi_1 / (smfpi_1 + lmfpi_1) 
+                       );
+
+            // state.CList(i) = colcoeff * Rhoi_2 * params.dis_ratio * params.sigma * vi_3 * vloss2ratioi * (1 + vloss2ratioi) * std::exp(-vloss2ratioi);
         }
     }
     
@@ -662,6 +679,86 @@ private:
                  << state.LList.transpose() << '\n';
                 // << state.CList.transpose() << '\n';
         }
+    }
+
+    // ---------------------------------------------------------------------
+    //  Precomputed big_int(vd) lookup: loading + interpolation
+    // ---------------------------------------------------------------------
+
+    // Load precomputed big_int(vd) lookup tables from files
+    void loadBigIntTable() {
+        // Filenames follow the same convention as other input lists
+        std::string nameVdi = params.inputDir + "vdiList-" + params.tag + ".txt";
+        std::string nameBi  = params.inputDir + "biList-"  + params.tag + ".txt";
+
+        try {
+            vd_grid = fileManager.readMatrix(nameVdi).array();
+            bi_grid = fileManager.readMatrix(nameBi).array();
+        } catch (const std::exception& e) {
+            logger.error("Failed to read vdi/bi lookup tables: " + std::string(e.what()));
+            throw;
+        }
+
+        if (vd_grid.size() == 0 || bi_grid.size() == 0) {
+            throw std::runtime_error("vdi/bi lookup tables are empty.");
+        }
+        if (vd_grid.size() != bi_grid.size()) {
+            throw std::runtime_error("Size mismatch between vdiList and biList.");
+        }
+
+        logger.info("Loaded big_int lookup tables with " +
+                    std::to_string(vd_grid.size()) + " points.");
+    }
+
+    // Simple log–log interpolation for big_int as a function of vd
+    // vd is the dimensionless velocity in units of v_fid
+    double bigIntInterp(double vd) const {
+        if (vd_grid.size() == 0) {
+            throw std::runtime_error("bigIntInterp called before vdi/bi tables were loaded.");
+        }
+        if (vd <= 0.0) {
+            throw std::runtime_error("bigIntInterp: vd must be positive for log interpolation.");
+        }
+
+        // Assume table sorted ascending in vd
+        if (vd <= vd_grid(0)) {
+            return bi_grid(0);
+        }
+        int n = static_cast<int>(vd_grid.size());
+        if (vd >= vd_grid(n - 1)) {
+            return bi_grid(n - 1);
+        }
+
+        // Binary search for the interval [left, right] with
+        // vd_grid[left] <= vd <= vd_grid[right]
+        int left = 0;
+        int right = n - 1;
+        while (right - left > 1) {
+            int mid = (left + right) / 2;
+            if (vd_grid(mid) > vd) {
+                right = mid;
+            } else {
+                left = mid;
+            }
+        }
+
+        double x  = std::log(vd);
+        double x0 = std::log(vd_grid(left));
+        double x1 = std::log(vd_grid(right));
+        double y0 = bi_grid(left);
+        double y1 = bi_grid(right);
+
+        // If values are not positive, fall back to linear interpolation
+        if (y0 <= 0.0 || y1 <= 0.0) {
+            double t_lin = (vd - vd_grid(left)) / (vd_grid(right) - vd_grid(left));
+            return y0 + t_lin * (y1 - y0);
+        }
+
+        double ly0 = std::log(y0);
+        double ly1 = std::log(y1);
+        double t   = (x - x0) / (x1 - x0);
+        double ly  = ly0 + t * (ly1 - ly0);
+        return std::exp(ly);
     }
 };
 
@@ -684,8 +781,15 @@ parse_basic_kv(const std::string& path){
     if(!in) throw std::runtime_error("Cannot open Basic file: " + path);
     std::string line;
     while(std::getline(in, line)){
+        // Strip comments starting with '#'
         auto pos_hash = line.find('#');
-        if(pos_hash!=std::string::npos) line = line.substr(0,pos_hash);
+        if(pos_hash!=std::string::npos) {
+            line = line.substr(0,pos_hash);
+        }
+        // Trim whitespace; skip empty/comment-only lines
+        line = trim(std::move(line));
+        if(line.empty()) continue;
+        
         size_t pos = std::string::npos;
         size_t pos_eq = line.find('=');
         size_t pos_col= line.find(':');
@@ -729,17 +833,16 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     else throw std::runtime_error("Basic file must provide 'name' (or 'tag').");
 
     P.a          = reqd("a");
-    P.b          = reqd("b");
+    // P.b          = reqd("b");
     P.c          = reqd("c");
     P.sigma_0    = reqd("sigma_0");
     P.omega      = reqd("omega");
     P.mass_norm  = reqd("baryon_plummer_mass_norm");
     P.scale_norm = reqd("baryon_plummer_ars");
-    P.dis_ratio  = reqd("dis_ratio");
-    P.v_loss     = reqd("v_loss");
-    P.r_s        = reqd("r_s");
-    P.rho_s      = reqd("rho_s");
-    P.t_fid_in_gyr = reqd("t_fid_in_gyr");
+    //P.dis_ratio  = reqd("dis_ratio");
+    //P.v_loss     = reqd("v_loss");
+    P.age_of_universe = reqd("default_age_of_universe");
+    P.epsilon    = reqd("epsilon");
 
     // derive paths from Basic location
     size_t slash = basic_path.find_last_of("/\\");
@@ -749,11 +852,9 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     P.outputFile= dir + "result-" + P.tag + ".txt";
 
     logger.info("Loaded Basic: " + basic_path);
-    logger.debug("tag=" + P.tag + ", a=" + std::to_string(P.a) + ", b=" + std::to_string(P.b) +
+    logger.debug("tag=" + P.tag + ", a=" + std::to_string(P.a) + // ", b=" + std::to_string(P.b) +
                  ", c=" + std::to_string(P.c) + ", sigma_0=" + std::to_string(P.sigma_0) +
                  ", mass_norm=" + std::to_string(P.mass_norm) + ", scale_norm=" + std::to_string(P.scale_norm) +
-                 ", r_s=" + std::to_string(P.r_s) + ", rho_s=" + std::to_string(P.rho_s) +
-                 ", t_fid_in_gyr=" + std::to_string(P.t_fid_in_gyr) +
                  (P.totalTime!=0.0 ? (", t="+std::to_string(P.totalTime)) : ""));
 }
 

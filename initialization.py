@@ -17,7 +17,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "20251126test"
+my_tag = "1127_heavy_mediator"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
@@ -28,8 +28,6 @@ v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
 lumi_fid  = mp.power(4 * mp.pi * rho_s * r_s**2, 5/2) * mp.power(nu.G_Newton, 3/2)
 t_fid     = 1 / mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s)
 C_fid     = mp.power(4 * mp.pi * nu.G_Newton, 3/2) * mp.power(rho_s, 5/2) * r_s**2
-
-t_fid_in_gyr = t_fid / (1e9 * nu.year)
 
 # Model parameters
 # a,b,c are the parameters for the SIDM conductivity terms
@@ -43,7 +41,7 @@ my_scale_norm = mp.mpf('0.1')
 
 # The following are all the velocity-dependent parameters.
 m_chi = 1 * nu.GeV
-m_phi = 1 * nu.MeV
+m_phi = 1e3 * nu.MeV
 omega = m_phi / m_chi
 # omega as a velocity also needs to be converted
 my_omega = omega / v_fid
@@ -54,11 +52,17 @@ sigma_0 = 3 * nu.cm**2 / nu.gram
 my_sigma_0 = sigma_0 / sigma_fid
 
 # 1D Lagragian zone parameters
-r_min = mp.mpf('0.0005')  # default 10^-4
-r_max = mp.mpf('500.0')  # default 10^2
-layer = 250
+r_min = mp.mpf('0.001')  # default 10^-4
+r_max = mp.mpf('100.0')  # default 10^2
+layer = 150
 # extra_layers are added to the end of the list to ensure a smooth 1D velocity dispersion profile
 extra_layer = 10
+
+# simulation parameters
+epsilon = 0.001   # ε = max(|delta u / u|)
+default_age_of_universe = 13.8 * 1e9 * nu.year   # simulation time limit
+my_default_age_of_universe = default_age_of_universe / t_fid  # renormalized
+
 
 #----------------------
 # Define all the dimensionless density and mass functions
@@ -253,7 +257,7 @@ def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type = "ruth"):
     bi = big_int(vd, w, cs_type=cs_type)
     smfp = 600 * mp.sqrt(mp.pi) * vd / my_sigma_0 / bi
     lmfp = 3 / 2 * a * c * density * vd**3 * my_sigma_0 * bi / 512
-    return (-1) * smfp * lmfp / (smfp + lmfp) * bd     # DON'T FORGET THE MINUS SIGN!!!
+    return (-1) * r_val**2 * smfp * lmfp / (smfp + lmfp) * bd     # DON'T FORGET THE MINUS SIGN AND THE R SQUARE!!!
 
 # Create logarithmically spaced radius points
 def log_space(start, stop, num):
@@ -294,7 +298,7 @@ def calculate_lists():
     # c_list_trunc = c_list[:layer]
     
     # Calculate Knudsen number
-    kn_list_trunc = [(1/(tot_cs_ruth(vd_list[i], my_omega) * rho_list[i])) / 
+    kn_list_trunc = [(1/(tot_cs_ruth(vd_list[i], my_omega) * my_sigma_0 * rho_list[i])) / 
                      mp.sqrt((2 * u_list[i]) / (3 * rho_list[i])) 
                      for i in range(layer)]
 
@@ -373,9 +377,11 @@ def export_data(results, my_tag=None):
     basic_info = [
         f"name = {my_tag}",
         "t = 0",
+        "## Dimensionless parameters are for simulations ##",
         f"a = {a}",
         f"c = {c}",
-        f"sigma = {my_sigma_0}",
+        f"sigma_0 = {my_sigma_0}",
+        f"omega = {my_omega}",
         "Initial dark matter profile = NFW",
         "Initial baryon profile = Plummer",
         f"rmin = {float(r_min)}",
@@ -384,9 +390,14 @@ def export_data(results, my_tag=None):
         f"Extra shell = {extra_layer}",
         f"baryon_Plummer_mass_norm = {float(my_mass_norm)}",
         f"baryon_Plummer_ars = {float(my_scale_norm)}",
-        f"r_s = {float(r_s)}",
-        f"rho_s = {float(rho_s)}",
-        f"t_fid_in_gyr = {float(t_fid_in_gyr)}"
+        "## Age of Universe in fidutical time. Epsilon for |u| / u <= epsilon ##",
+        f"default_age_of_universe = {float(my_default_age_of_universe)}",
+        f"epsilon = {float(epsilon)}",
+        "## Dimensional parameters are for readout and presentations ##",
+        f"r_s_in_nu = {float(r_s)}",  # in natural units
+        f"rho_s_in_nu = {float(rho_s)}", # in natural units
+        f"m_chi_in_GeV = {float(m_chi / nu.GeV)}",
+        f"m_phi_in_MeV = {float(m_phi / nu.MeV)}"
     ]
     
     # Write basic info
