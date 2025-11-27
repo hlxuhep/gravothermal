@@ -21,8 +21,8 @@ my_tag = "1127_heavy_mediator"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
-rho_s     = 1.28e7 * nu.mSun / nu.kpc**3
-r_s       = 6.5 * nu.kpc
+rho_s     = 1.49e6 * nu.mSun / nu.kpc**3
+r_s       = 11.1 * nu.kpc
 sigma_fid = 1 / rho_s / r_s
 v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
 lumi_fid  = mp.power(4 * mp.pi * rho_s * r_s**2, 5/2) * mp.power(nu.G_Newton, 3/2)
@@ -48,19 +48,19 @@ my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
 # g_chi = 1e-2
 # sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
-sigma_0 = 3 * nu.cm**2 / nu.gram
+sigma_0 = 25.44 * nu.cm**2 / nu.gram
 my_sigma_0 = sigma_0 / sigma_fid
 
 # 1D Lagragian zone parameters
-r_min = mp.mpf('0.001')  # default 10^-4
-r_max = mp.mpf('100.0')  # default 10^2
+r_min = mp.mpf('0.01')  # default 10^-4
+r_max = mp.mpf('1000.0')  # default 10^2
 layer = 150
 # extra_layers are added to the end of the list to ensure a smooth 1D velocity dispersion profile
 extra_layer = 10
 
 # simulation parameters
 epsilon = 0.001   # ε = max(|delta u / u|)
-default_age_of_universe = 13.8 * 1e9 * nu.year   # simulation time limit
+default_age_of_universe = 300 * 1e9 * nu.year   # simulation time limit
 my_default_age_of_universe = default_age_of_universe / t_fid  # renormalized
 
 
