@@ -17,12 +17,12 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "1127_heavy_mediator"
+my_tag = "2205.03392r3"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
-rho_s     = 1.49e6 * nu.mSun / nu.kpc**3
-r_s       = 11.1 * nu.kpc
+rho_s     = 2.74e8 * nu.mSun / nu.kpc**3
+r_s       = 0.141 * nu.kpc
 sigma_fid = 1 / rho_s / r_s
 v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
 lumi_fid  = mp.power(4 * mp.pi * rho_s * r_s**2, 5/2) * mp.power(nu.G_Newton, 3/2)
@@ -41,14 +41,15 @@ my_scale_norm = mp.mpf('0.1')
 
 # The following are all the velocity-dependent parameters.
 m_chi = 1 * nu.GeV
-m_phi = 1e3 * nu.MeV
-omega = m_phi / m_chi
+# m_phi = 1 * nu.MeV
+omega = 1 * nu.km / nu.sec
+m_phi = m_chi * omega
 # omega as a velocity also needs to be converted
 my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
 # g_chi = 1e-2
 # sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
-sigma_0 = 25.44 * nu.cm**2 / nu.gram
+sigma_0 = 2.4e4 * nu.cm**2 / nu.gram
 my_sigma_0 = sigma_0 / sigma_fid
 
 # 1D Lagragian zone parameters
@@ -60,8 +61,8 @@ extra_layer = 10
 
 # simulation parameters
 epsilon = 0.001   # ε = max(|delta u / u|)
-default_age_of_universe = 300 * 1e9 * nu.year   # simulation time limit
-my_default_age_of_universe = default_age_of_universe / t_fid  # renormalized
+default_age_of_universe_in_gyr = 20   # simulation time limit in gyr
+my_default_age_of_universe = default_age_of_universe_in_gyr * 1e9 * nu.year / t_fid  # renormalized
 
 
 #----------------------
