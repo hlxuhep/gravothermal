@@ -17,7 +17,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "2205.03392r3"
+my_tag = "2205.03392.fig2a"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
@@ -33,7 +33,7 @@ C_fid     = mp.power(4 * mp.pi * nu.G_Newton, 3/2) * mp.power(rho_s, 5/2) * r_s*
 # a,b,c are the parameters for the SIDM conductivity terms
 a = mp.mpf('2.257')
 # b = mp.mpf('1.385')
-c = mp.mpf('0.6')
+c = mp.mpf('0.75')
 # my_mass_norm is the normalized baryon mass, M_b/(4*pi*rho_s*r_s^3)
 my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
@@ -51,11 +51,12 @@ my_omega = omega / v_fid
 # sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
 sigma_0 = 2.4e4 * nu.cm**2 / nu.gram
 my_sigma_0 = sigma_0 / sigma_fid
+my_cs_type = "moll"
 
 # 1D Lagragian zone parameters
-r_min = mp.mpf('0.01')  # default 10^-4
+r_min = mp.mpf('0.005')  # default 10^-4
 r_max = mp.mpf('1000.0')  # default 10^2
-layer = 150
+layer = 160
 # extra_layers are added to the end of the list to ensure a smooth 1D velocity dispersion profile
 extra_layer = 10
 
@@ -227,7 +228,7 @@ def I_moll(v, w):
     down = y**3 * (2 + y)
     return top / down
 
-def big_int(vd, w , cs_type="ruth"):
+def big_int(vd, w , cs_type):
     vd_mp = mp.mpf(vd)
     w_mp = mp.mpf(w)
 
@@ -248,7 +249,7 @@ def big_int(vd, w , cs_type="ruth"):
     return 128 * integral_val
 
 # Velocity-Dependent conductivity and lumonosity
-def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type = "ruth"):
+def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type):
     """Dark matter luminosity function"""
     r_val = mp.mpf(r)
     
@@ -285,7 +286,7 @@ def calculate_lists():
     # Calculate specific kinetic energy 
     u_list = [mp.mpf('1.5') * mp.re(v)**2 for v in vd_list]
     # Calculate the dark matter luminosity
-    l_list = [luminosity_dm(r, a, c, my_sigma_0, my_omega, my_mass_norm, my_scale_norm) for r in r_list1]
+    l_list = [luminosity_dm(r, a, c, my_sigma_0, my_omega, my_mass_norm, my_scale_norm, my_cs_type) for r in r_list1]
     # c_list = [cooling_dm(r, my_sigma, my_dis_ratio, my_velocity_loss, my_mass_norm, my_scale_norm) for r in r_list2]
     
     # Truncate to extra layers
@@ -311,7 +312,7 @@ def calculate_lists():
 
     # vdi = vd for big integral
     vdi_big_list = log_space(v_min, v_max, n_v_big)
-    bi_big_list  = [big_int(vd, my_omega, cs_type="ruth") for vd in vdi_big_list]
+    bi_big_list  = [big_int(vd, my_omega, cs_type = my_cs_type) for vd in vdi_big_list]
 
     return {
         'r_list1_trunc': r_list1_trunc,
