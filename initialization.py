@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 # Set precision 
 mp.mp.dps = 25
 # Number of cores
-N_proc = 32
+N_proc = 6
 
 # ----------------------
 # USER CONFIGURATION
@@ -20,12 +20,12 @@ N_proc = 32
 base_path = "./test"
 
 # Output name
-my_tag = "brem_test"
+my_tag = "2205.02957fig64"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
-rho_s     = 2.74e8 * nu.mSun / nu.kpc**3
-r_s       = 0.141 * nu.kpc
+rho_s     = 4.2e6 * nu.mSun / nu.kpc**3
+r_s       = 24.54 * nu.kpc
 sigma_fid = 1 / rho_s / r_s
 v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
 lumi_fid  = mp.power(4 * mp.pi * rho_s * r_s**2, 5/2) * mp.power(nu.G_Newton, 3/2)
@@ -36,7 +36,7 @@ C_fid     = mp.power(4 * mp.pi * nu.G_Newton, 3/2) * mp.power(rho_s, 5/2) * r_s*
 # a,b,c are the parameters for the SIDM conductivity terms
 a = mp.mpf('2.257')
 # b = mp.mpf('1.385')
-c = mp.mpf('0.75')
+c = mp.mpf('0.6')
 # my_mass_norm is the normalized baryon mass, M_b/(4*pi*rho_s*r_s^3)
 my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
@@ -44,18 +44,26 @@ my_scale_norm = mp.mpf('0.1')
 
 # The following are all the velocity-dependent parameters.
 m_chi = 1 * nu.GeV       # DM mass
-m_phi = 1e-8 * nu.keV    # mediator mass
-omega = m_phi / m_chi    # mass ratio
-g_chi = 1e-3             # coupling constant
+# m_V = 1e10 * nu.keV    # mediator mass
+omega = 1.0 * v_fid   # mass ratio
+m_V = omega * m_chi
+#alpha_chi = 1e-4
+#g_chi = mp.sqrt(4 * mp.pi * alpha_chi)          # coupling constant
 # omega as a velocity also needs to be converted
 my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
-sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
+#sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
+# sigma_0 = 30.0 * nu.cm**2 / nu.gram
+sigma_0 = sigma_fid * 0.01
+g_chi = (4 * mp.pi * m_chi**2 * omega**4 * m_chi * sigma_0)**(1/4)
+print(g_chi)
 my_sigma_0 = sigma_0 / sigma_fid
 # sigma_1 is g_chi^4/m_chi^3 - which is in similar form of sigma_0.
 sigma_1 = g_chi**4 / m_chi**3
 my_sigma_1 = sigma_1 / sigma_fid
 my_cs_type = "ruth"
+if_brem = False
+if_anni = False
 
 # 1D Lagragian zone parameters
 r_min = mp.mpf('0.005')  # default 10^-4
@@ -66,7 +74,7 @@ extra_layer = 10
 
 # simulation parameters
 epsilon = 0.001   # ε = max(|delta u / u|)
-default_age_of_universe_in_gyr = 20   # simulation time limit in gyr
+default_age_of_universe_in_gyr = 2e10   # simulation time limit in gyr
 my_default_age_of_universe = default_age_of_universe_in_gyr * 1e9 * nu.year / t_fid  # renormalized
 
 
@@ -274,7 +282,7 @@ def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type):
     return (-1) * r_val**2 * smfp * lmfp / (smfp + lmfp) * bd     # DON'T FORGET THE MINUS SIGN AND THE R SQUARE!!!
 
 def brem_int(vd):
-    v_min = mp.sqrt(4 * m_phi / m_chi) / v_fid
+    v_min = mp.sqrt(4 * m_V / m_chi) / v_fid
     zeta = v_min / vd
     def inner_int(t):
         a = zeta / t
@@ -349,27 +357,33 @@ def calculate_lists():
 
     big_int_sample  = [big_int(vd, my_omega, cs_type=my_cs_type) for vd in vd_sample]
 
-    # tabulate brems 2D 积分（得到的是 python float 列表）
-    brem_int_sample = precompute_brem_table()
+    if if_brem:
+        # tabulate brems 2D 积分（得到的是 python float 列表）
+        brem_int_sample = precompute_brem_table()
 
-    # ---- 关键：把 mpmath / float 列表变成 numpy float 数组再做 log + 插值 ----
-    vd_sample_np   = np.array([float(v) for v in vd_sample], dtype=float)
-    brem_sample_np = np.array(brem_int_sample, dtype=float)
+        # ---- 关键：把 mpmath / float 列表变成 numpy float 数组再做 log + 插值 ----
+        vd_sample_np   = np.array([float(v) for v in vd_sample], dtype=float)
+        brem_sample_np = np.array(brem_int_sample, dtype=float)
 
-    brem_interp = interp1d(np.log(vd_sample_np), np.log(brem_sample_np),
-                           kind='cubic', fill_value='extrapolate')
+        brem_interp = interp1d(np.log(vd_sample_np), np.log(brem_sample_np),
+                            kind='cubic', fill_value='extrapolate')
 
-    def brem_from_table(vd):
-        return float(np.exp(brem_interp(np.log(float(vd)))))
-    def cooling_brem_from_table(r_val, mass_norm, ars):
-        vd = vd_dm(r_val, mass_norm, ars)
-        rho = density_dm(r_val)
-        prefactor = rho**2 * g_chi**2 * my_sigma_1 / (96 * mp.pi**(7/2)) * vd / v_fid**2
-        return prefactor * brem_from_table(vd)
+        def brem_from_table(vd):
+            return float(np.exp(brem_interp(np.log(float(vd)))))
+        def cooling_brem_from_table(r_val, mass_norm, ars):
+            vd = vd_dm(r_val, mass_norm, ars)
+            rho = density_dm(r_val)
+            prefactor = rho**2 * g_chi**2 * my_sigma_1 / (96 * mp.pi**(7/2)) * vd / v_fid**2
+            return prefactor * brem_from_table(vd)
 
-    c_list = [cooling_brem_from_table(r, my_mass_norm, my_scale_norm) for r in r_list2] # 这个也要并行计算
+        c_list = [cooling_brem_from_table(r, my_mass_norm, my_scale_norm) for r in r_list2]
+        
+    else:
+        # no bremsstrahlung cooling: use zero tables with the same shape
+        brem_int_sample = [0.0 for _ in vd_sample]
+        c_list = [0.0 for r in r_list2]
+
     c_list_trunc = c_list[:layer]
-
     return {
         'r_list1_trunc': r_list1_trunc,
         'r_list2_trunc': r_list2_trunc,
@@ -456,7 +470,7 @@ def export_data(results, my_tag=None):
         f"r_s_in_nu = {float(r_s)}",  # in natural units
         f"rho_s_in_nu = {float(rho_s)}", # in natural units
         f"m_chi_in_GeV = {float(m_chi / nu.GeV)}",
-        f"m_phi_in_MeV = {float(m_phi / nu.MeV)}"
+        f"m_V_in_MeV = {float(m_V / nu.MeV)}"
     ]
     
     # Write basic info
@@ -504,11 +518,11 @@ def export_data(results, my_tag=None):
     with open(vdi_file, 'w') as f:
         f.write('\n'.join(vd_sample_list_str))
 
-    big_int_file = os.path.join(output_dir, f"bigIntList-{my_tag}.txt")
+    big_int_file = os.path.join(output_dir, f"biList-{my_tag}.txt")
     with open(big_int_file, 'w') as f:
         f.write('\n'.join(big_int_list_str))
 
-    brem_int_file = os.path.join(output_dir, f"bremIntList-{my_tag}.txt")
+    brem_int_file = os.path.join(output_dir, f"bmList-{my_tag}.txt")
     with open(brem_int_file, 'w') as f:
         f.write('\n'.join(brem_int_list_str))
 
