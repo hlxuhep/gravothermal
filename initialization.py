@@ -5,9 +5,12 @@ import os
 from datetime import datetime
 from tools import natural_units as nu
 from numpy.polynomial.laguerre import laggauss
-
+from multiprocessing import Pool
+from scipy.interpolate import interp1d
 # Set precision 
 mp.mp.dps = 25
+# Number of cores
+N_proc = 32
 
 # ----------------------
 # USER CONFIGURATION
@@ -17,7 +20,7 @@ mp.mp.dps = 25
 base_path = "./test"
 
 # Output name
-my_tag = "2205.03392.fig2a"
+my_tag = "brem_test"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
@@ -40,18 +43,19 @@ my_mass_norm = mp.mpf('0.0')
 my_scale_norm = mp.mpf('0.1')
 
 # The following are all the velocity-dependent parameters.
-m_chi = 1 * nu.GeV
-# m_phi = 1 * nu.MeV
-omega = 1 * nu.km / nu.sec
-m_phi = m_chi * omega
+m_chi = 1 * nu.GeV       # DM mass
+m_phi = 1e-8 * nu.keV    # mediator mass
+omega = m_phi / m_chi    # mass ratio
+g_chi = 1e-3             # coupling constant
 # omega as a velocity also needs to be converted
 my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
-# g_chi = 1e-2
-# sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
-sigma_0 = 2.4e4 * nu.cm**2 / nu.gram
+sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
 my_sigma_0 = sigma_0 / sigma_fid
-my_cs_type = "moll"
+# sigma_1 is g_chi^4/m_chi^3 - which is in similar form of sigma_0.
+sigma_1 = g_chi**4 / m_chi**3
+my_sigma_1 = sigma_1 / sigma_fid
+my_cs_type = "ruth"
 
 # 1D Lagragian zone parameters
 r_min = mp.mpf('0.005')  # default 10^-4
@@ -181,6 +185,14 @@ def big_dev(r, mass_norm, ars):
     
     return result
 
+# Create logarithmically spaced radius points
+def log_space(start, stop, num):
+    """Create logarithmically spaced points similar to Mathematica's Subdivide"""
+    start_log = mp.log10(start)
+    stop_log = mp.log10(stop)
+    step = (stop_log - start_log) / (num - 1)
+    return [mp.power(10, start_log + i * step) for i in range(num)]
+
 # We are in place to define particle physics functions.
 # differential cross section only takes the dimensionless velocity and angular terms, without the sigma at front.
 def diff_cs_ruth(v, w, x): # v for velocity (renormalized), x for cos\theta
@@ -261,13 +273,44 @@ def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type):
     lmfp = 3 / 2 * a * c * density * vd**3 * my_sigma_0 * bi / 512
     return (-1) * r_val**2 * smfp * lmfp / (smfp + lmfp) * bd     # DON'T FORGET THE MINUS SIGN AND THE R SQUARE!!!
 
-# Create logarithmically spaced radius points
-def log_space(start, stop, num):
-    """Create logarithmically spaced points similar to Mathematica's Subdivide"""
-    start_log = mp.log10(start)
-    stop_log = mp.log10(stop)
-    step = (stop_log - start_log) / (num - 1)
-    return [mp.power(10, start_log + i * step) for i in range(num)]
+def brem_int(vd):
+    v_min = mp.sqrt(4 * m_phi / m_chi) / v_fid
+    zeta = v_min / vd
+    def inner_int(t):
+        a = zeta / t
+        x_max = 1
+        x_min = a**2
+        def f(x):
+            return (1 + 0.5 * a**4 / x**2) * mp.sqrt(1 - a**4 / x**2) * 2 * mp.atanh(mp.sqrt(1 - x))
+        return t**3 * mp.e**(-t**2 / 4) * mp.quad(f, [x_min, x_max])
+    return mp.re(mp.quad(inner_int, [zeta, mp.inf]))
+
+def cooling_brem(r_val, mass_norm, ars):   # all in fidutical values
+    vd = vd_dm(r_val, mass_norm, ars)
+    rho = density_dm(r_val)
+    prefactor = rho**2 * g_chi**2 * my_sigma_1 / 96 / mp.power(mp.pi, 7/2) * vd / v_fid**2  # Need 1/v_fid**2 to balance the fiducial values.
+    return prefactor * brem_int(vd)
+
+def brem_int_for_pool(vd):
+    # 单独封装一层, 方便序列化
+    return float(brem_int(vd))
+
+# Precompute big_int and brem_int on a velocity grid:
+# vd in units of v_fid, ranging from 1e-2 * v_fid to 1e2 * v_fid (dimensionless 1e-2 to 1e2)
+v_min = mp.mpf('1e-2')
+v_max = mp.mpf('1e2')
+n_v_big = 200  # number of sample points for big_int(vd)
+
+# vdi = vd for big integral
+vd_sample = log_space(v_min, v_max, n_v_big)
+
+def precompute_brem_table(n_proc = N_proc):
+    # 转成普通 float，避免 pickling mpmath 对象太重
+    vd_sample_brem = [float(v) for v in vd_sample]
+
+    with Pool(processes=n_proc) as pool:
+        results = pool.map(brem_int_for_pool, vd_sample_brem)
+    return results
 
 # Create radius lists
 # r_list1 is based on the radius range and number of layers
@@ -287,7 +330,6 @@ def calculate_lists():
     u_list = [mp.mpf('1.5') * mp.re(v)**2 for v in vd_list]
     # Calculate the dark matter luminosity
     l_list = [luminosity_dm(r, a, c, my_sigma_0, my_omega, my_mass_norm, my_scale_norm, my_cs_type) for r in r_list1]
-    # c_list = [cooling_dm(r, my_sigma, my_dis_ratio, my_velocity_loss, my_mass_norm, my_scale_norm) for r in r_list2]
     
     # Truncate to extra layers
     r_list1_trunc = r_list1[:layer]
@@ -297,22 +339,36 @@ def calculate_lists():
     u_list_trunc = u_list[:layer]
     vd_list_trunc = vd_list[:layer]
     l_list_trunc = l_list[:layer]
-    # c_list_trunc = c_list[:layer]
     
     # Calculate Knudsen number
     kn_list_trunc = [(1/(tot_cs_ruth(vd_list[i], my_omega) * my_sigma_0 * rho_list[i])) / 
                      mp.sqrt((2 * u_list[i]) / (3 * rho_list[i])) 
                      for i in range(layer)]
 
-    # Precompute big_int on a velocity grid:
-    # vd in units of v_fid, ranging from 1e-2 * v_fid to 1e2 * v_fid (dimensionless 1e-2 to 1e2)
-    v_min = mp.mpf('1e-2')
-    v_max = mp.mpf('1e2')
-    n_v_big = 200  # number of sample points for big_int(vd)
+    # Precompute big_int and brem_int on a velocity grid:
 
-    # vdi = vd for big integral
-    vdi_big_list = log_space(v_min, v_max, n_v_big)
-    bi_big_list  = [big_int(vd, my_omega, cs_type = my_cs_type) for vd in vdi_big_list]
+    big_int_sample  = [big_int(vd, my_omega, cs_type=my_cs_type) for vd in vd_sample]
+
+    # tabulate brems 2D 积分（得到的是 python float 列表）
+    brem_int_sample = precompute_brem_table()
+
+    # ---- 关键：把 mpmath / float 列表变成 numpy float 数组再做 log + 插值 ----
+    vd_sample_np   = np.array([float(v) for v in vd_sample], dtype=float)
+    brem_sample_np = np.array(brem_int_sample, dtype=float)
+
+    brem_interp = interp1d(np.log(vd_sample_np), np.log(brem_sample_np),
+                           kind='cubic', fill_value='extrapolate')
+
+    def brem_from_table(vd):
+        return float(np.exp(brem_interp(np.log(float(vd)))))
+    def cooling_brem_from_table(r_val, mass_norm, ars):
+        vd = vd_dm(r_val, mass_norm, ars)
+        rho = density_dm(r_val)
+        prefactor = rho**2 * g_chi**2 * my_sigma_1 / (96 * mp.pi**(7/2)) * vd / v_fid**2
+        return prefactor * brem_from_table(vd)
+
+    c_list = [cooling_brem_from_table(r, my_mass_norm, my_scale_norm) for r in r_list2] # 这个也要并行计算
+    c_list_trunc = c_list[:layer]
 
     return {
         'r_list1_trunc': r_list1_trunc,
@@ -323,9 +379,10 @@ def calculate_lists():
         'vd_list_trunc': vd_list_trunc,
         'l_list_trunc': l_list_trunc,
         'kn_list_trunc': kn_list_trunc,
-        'vdi_big_list': vdi_big_list,
-        'bi_big_list': bi_big_list
-        #'c_list_trunc': c_list_trunc
+        'c_list_trunc': c_list_trunc,
+        'vd_sample': vd_sample,
+        'big_int_sample': big_int_sample,
+        'brem_int_sample': brem_int_sample
     }
 
 def plot_results(results):
@@ -339,7 +396,7 @@ def plot_results(results):
     vd = np.array([float(mp.re(val)) for val in results['vd_list_trunc']])
     lum = np.array([float(mp.re(val)) for val in results['l_list_trunc']])
     kn = np.array([float(mp.re(val)) for val in results['kn_list_trunc']])
-    # col = np.array([float(mp.re(val)) for val in results['c_list_trunc']])
+    col = np.array([float(mp.re(val)) for val in results['c_list_trunc']])
     
     plt.figure(figsize=(10, 10))
     
@@ -350,7 +407,7 @@ def plot_results(results):
     plt.loglog(r1, lum, label=r'$L_{\chi}$')
     plt.loglog(r1, -lum, label=r'$-L_{\chi}$')
     plt.loglog(r2, kn, label=r'$Kn_{\chi}$')
-    # plt.loglog(r2, col, label=r'$C_{\chi}$')
+    plt.loglog(r2, col, label=r'$C_{\chi}$')
     
     plt.legend()
     plt.grid(True, which="both", ls="-")
@@ -415,11 +472,12 @@ def export_data(results, my_tag=None):
     u_list_str = [f"{float(mp.re(u)):.10g}" for u in results['u_list_trunc']] + ['']
     l_list_str = [f"{float(mp.re(l)):.10g}" for l in results['l_list_trunc']] + ['']
 
-    # big integral (bi) calculated at vd points:
-    vdi_list_str = [f"{float(mp.re(vdi)):.10g}" for vdi in results['vdi_big_list']] + ['']
-    bi_list_str = [f"{float(mp.re(l)):.10g}" for l in results['bi_big_list']] + ['']
+    # big integral (big_int) and brem integral (brem_int) calculated at vd points:
+    vd_sample_list_str = [f"{float(mp.re(vdi)):.10g}" for vdi in results['vd_sample']] + ['']
+    big_int_list_str = [f"{float(mp.re(l)):.10g}" for l in results['big_int_sample']] + ['']
+    brem_int_list_str = [f"{float(mp.re(l)):.10g}" for l in results['brem_int_sample']] + ['']
 
-    # c_list_str = [f"{float(mp.re(c)):.10g}" for c in results['c_list_trunc']] + ['']
+    c_list_str = [f"{float(mp.re(c)):.10g}" for c in results['c_list_trunc']] + ['']
     
     # Write data files with full paths
     r_file = os.path.join(output_dir, f"RList-{my_tag}.txt")
@@ -444,15 +502,19 @@ def export_data(results, my_tag=None):
 
     vdi_file = os.path.join(output_dir, f"vdiList-{my_tag}.txt")
     with open(vdi_file, 'w') as f:
-        f.write('\n'.join(vdi_list_str))
+        f.write('\n'.join(vd_sample_list_str))
 
-    bi_file = os.path.join(output_dir, f"biList-{my_tag}.txt")
-    with open(bi_file, 'w') as f:
-        f.write('\n'.join(bi_list_str))
+    big_int_file = os.path.join(output_dir, f"bigIntList-{my_tag}.txt")
+    with open(big_int_file, 'w') as f:
+        f.write('\n'.join(big_int_list_str))
 
-#    c_file = os.path.join(output_dir, f"CList-{my_tag}.txt")
-#    with open(c_file, 'w') as f:
-#        f.write('\n'.join(c_list_str))
+    brem_int_file = os.path.join(output_dir, f"bremIntList-{my_tag}.txt")
+    with open(brem_int_file, 'w') as f:
+        f.write('\n'.join(brem_int_list_str))
+
+    c_file = os.path.join(output_dir, f"CList-{my_tag}.txt")
+    with open(c_file, 'w') as f:
+        f.write('\n'.join(c_list_str))
     
     return output_dir
 
