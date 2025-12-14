@@ -75,8 +75,6 @@ public:
     double c;
     double sigma_0;
     double omega;
-    // double dis_ratio;
-    // double v_loss;
     double mass_norm;
     double scale_norm;
     double age_of_universe;
@@ -106,10 +104,7 @@ public:
         logger.info("Abs(delta u/u): " + std::to_string(epsilon));
         logger.info("Cross section (sigma_0): " + std::to_string(sigma_0));
         logger.info("w = m_phi / m_chi: " + std::to_string(omega));
-        //logger.info("dis_ratio: " + std::to_string(dis_ratio));
-        //logger.info("v_loss: " + std::to_string(v_loss));
         logger.info("Conduction parameter (a, c): " + std::to_string(a) + ", " + std::to_string(c));
-        //logger.info("Cooling parameter (sigma'/sigma, v_loss): " + std::to_string(dis_ratio) + ", " + std::to_string(v_loss));
         logger.info("Baryon parameter (mass_norm, scale_norm): " + std::to_string(mass_norm) + ", "
                  + std::to_string(scale_norm));
     }
@@ -200,7 +195,7 @@ public:
     Eigen::ArrayXd MhyList;    // Total mass (dark matter + baryon)
     Eigen::ArrayXd uList;      // Specific internal energy
     Eigen::ArrayXd LList;      // Luminosity
-    // Eigen::ArrayXd CList;      // Cooling rate
+    Eigen::ArrayXd CList;      // Cooling rate
     Eigen::ArrayXd vList;      // 1D Velocity dispersion
     Eigen::ArrayXd pList;      // Pressure
     Eigen::ArrayXd aList;      // Adiabatic variable
@@ -218,14 +213,14 @@ public:
             std::string nameM   = params.inputDir + "MList-"   + params.tag + ".txt";
             std::string nameu   = params.inputDir + "uList-"   + params.tag + ".txt";
             std::string nameL   = params.inputDir + "LList-"   + params.tag + ".txt";
-            // std::string nameC   = params.inputDir + "CList-"   + params.tag + ".txt";
+            std::string nameC   = params.inputDir + "CList-"   + params.tag + ".txt";
             
             RList   = fileManager.readMatrix(nameR).array();
             RhoList = fileManager.readMatrix(nameRho).array();
             MList   = fileManager.readMatrix(nameM).array();
             uList   = fileManager.readMatrix(nameu).array();
             LList   = fileManager.readMatrix(nameL).array();
-            // CList   = fileManager.readMatrix(nameC).array();
+            CList   = fileManager.readMatrix(nameC).array();
             
             NoLayers = RList.rows();
             
@@ -294,6 +289,7 @@ private:
     // Lookup tables for big_int(vd) (dimensionless in units of v_fid)
     Eigen::ArrayXd vd_grid;  // vd grid
     Eigen::ArrayXd bi_grid;  // big_int(vd) on that grid
+    Eigen::ArrayXd bm_grid;  // brem_int(vd) on that grid
 
 public:
     Simulator(const SimulationParameters& p, 
@@ -343,8 +339,8 @@ public:
                  << state.RhoList.transpose() << '\n'
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
-                 << state.LList.transpose() << '\n';
-                // << state.CList.transpose() << '\n';
+                 << state.LList.transpose() << '\n'
+                 << state.CList.transpose() << '\n';
         }
         file.close();
         
@@ -395,10 +391,10 @@ private:
     double performConductionStep() {
         int NoLayers = state.NoLayers;
         
-        deltaUcoeff(0) = - ((state.LList(0) / state.MList(0))) / state.uList(0); // + state.CList(0) / state.RhoList(0) 
+        deltaUcoeff(0) = - ((state.LList(0) / state.MList(0))) / state.uList(0) + state.CList(0) / state.RhoList(0);
         for (int i = 1; i < (NoLayers-1); i++) {
             deltaUcoeff(i) = -((state.LList(i) - state.LList(i-1)) / (state.MList(i) - state.MList(i-1)) 
-                               ) / state.uList(i);  // + state.CList(i) / state.RhoList(i) 
+                               ) / state.uList(i) + state.CList(i) / state.RhoList(i);
         }
         
         double deltat = params.epsilon / (deltaUcoeff.abs().maxCoeff());
@@ -609,14 +605,6 @@ private:
         double smfp_1 = 600.0 * std::sqrt(M_PI) * v1 / params.sigma_0 / bi_1;
         double lmfp_0 = 1.5 * params.a * params.c * Rho0 * v0_3 * params.sigma_0 * bi_0 / 512.0 ; 
         double lmfp_1 = 1.5 * params.a * params.c * Rho1 * v1_3 * params.sigma_0 * bi_1 / 512.0 ;
-        // state.LList(0) = -(state.uList(1) - state.uList(0)) / state.RList(1) * 
-        //               R0_2 * params.a * params.b * params.c * params.sigma *
-        //               (state.RhoList(0) * v0_3 / 
-        //               (params.a * params.c * sigma_2 * state.RhoList(0) * 
-        //               v0_2 + params.b) + 
-        //               state.RhoList(1) * v1_3 / 
-        //               (params.a * params.c * sigma_2 * state.RhoList(1) * 
-        //               v1_2 + params.b));
 
         state.LList(0) = - 2.0 / 3.0 * (state.uList(1) - state.uList(0)) / state.RList(1) * 
                        R0_2 * ( 
@@ -677,7 +665,7 @@ private:
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
                  << state.LList.transpose() << '\n';
-                // << state.CList.transpose() << '\n';
+                 << state.CList.transpose() << '\n';
         }
     }
 
