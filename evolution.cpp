@@ -75,10 +75,13 @@ public:
     double c;
     double sigma_0;
     double omega;
+    double brem_prefactor;
     double mass_norm;
     double scale_norm;
     double age_of_universe;
     double epsilon;
+    bool if_brem;
+    bool if_anni;
 
     // IO parameters（必须由 Basic 决定）
     std::string tag;
@@ -92,8 +95,11 @@ public:
           totalTime(0.0)
     {
         epsilon = 0.0;
+        if_brem = false;
+        if_anni = false;
         // 重要：不再设置 a,c,sigma_0,mass_norm,scale_norm,tag,inputDir,outputFile
         // 这些都必须在 load_from_basic() 里读取并赋值
+        // 初始化 if_brem 和 if_anni
     }
     
     void display(const Logger& logger) const {
@@ -107,6 +113,7 @@ public:
         logger.info("Conduction parameter (a, c): " + std::to_string(a) + ", " + std::to_string(c));
         logger.info("Baryon parameter (mass_norm, scale_norm): " + std::to_string(mass_norm) + ", "
                  + std::to_string(scale_norm));
+        logger.info(std::string("Flags (if_brem, if_anni): ") + (if_brem ? "1" : "0") + ", " + (if_anni ? "1" : "0"));
     }
     bool checkForAgeOfUniverse(Logger& logger) const {
         if (totalTime > age_of_universe) {
@@ -586,18 +593,15 @@ private:
         
         double R0 = state.RList(0);
         double R0_2 = R0 * R0;
-        // double sigma_2 = params.sigma * params.sigma;
         double v0 = state.vList(0);
         double v0_2 = v0 * v0;
         double v0_3 = v0_2 * v0;
         double v1 = state.vList(1);
         double v1_2 = v1 * v1;
         double v1_3 = v1_2 * v1;
-        // double vloss2ratio0 = params.v_loss * params.v_loss / v0_2;
-        // double colcoeff = 4.0 / std::sqrt(M_PI);
         double Rho0 = state.RhoList(0);
         double Rho1 = state.RhoList(1);
-        // double Rho0_2 = Rho0 * Rho0;
+        double Rho0_2 = Rho0 * Rho0;
         
         double bi_0 = bigIntInterp(v0);
         double bi_1 = bigIntInterp(v1);
@@ -611,7 +615,7 @@ private:
                         smfp_0 * lmfp_0 / (smfp_0 + lmfp_0) + smfp_1 * lmfp_1 / (smfp_1 + lmfp_1) 
                        );
 
-        // state.CList(0) = colcoeff * Rho0_2 * params.dis_ratio * params.sigma * v0_3 * vloss2ratio0 * (1 + vloss2ratio0) * std::exp(-vloss2ratio0);
+        state.CList(0) = params.if_brem ? (params.brem_prefactor * Rho0_2 * v0 * bremIntInterp(v0)) : 0.0 ;
         
         for (int i = 1; i < (NoLayers-1); i++) {
             double Ri = state.RList(i);
@@ -627,10 +631,9 @@ private:
             double vi1_2 = vi1 * vi1;
             double vi1_3 = vi1_2 * vi1;
 
-            // double vloss2ratioi = params.v_loss * params.v_loss / vi_2;
             double Rhoi = state.RhoList(i);
             double Rhoi_1 = state.RhoList(i+1);
-            // double Rhoi_2 = Rhoi * Rhoi;
+            double Rhoi_2 = Rhoi * Rhoi;
 
             double bii = bigIntInterp(vi);
             double bii_1 = bigIntInterp(vi1);
@@ -638,22 +641,12 @@ private:
             double smfpi_1 = 600.0 * std::sqrt(M_PI) * vi1 / params.sigma_0 / bii_1;
             double lmfpi = 1.5 * params.a * params.c * Rhoi * vi_3 * params.sigma_0 * bii / 512.0 ; 
             double lmfpi_1 = 1.5 * params.a * params.c * Rhoi_1 * vi1_3 * params.sigma_0 * bii_1 / 512.0 ;
-            
-            //state.LList(i) = -(state.uList(i+1) - state.uList(i)) / 
-            //               (Ri1 - Ri_1) * 
-            //               Ri_2 * params.a * params.b * params.c * params.sigma *
-            //               (state.RhoList(i) * vi_3 / 
-            //               (params.a * params.c * sigma_2 * state.RhoList(i) * 
-            //               vi_2 + params.b) + 
-            //               state.RhoList(i+1) * vi1_3 / 
-            //               (params.a * params.c * sigma_2 * state.RhoList(i+1) * 
-            //               vi1_2 + params.b));
 
             state.LList(i) = - 2.0 / 3.0 * (state.uList(i+1) - state.uList(i)) / (Ri1 - Ri_1) * Ri_2 * ( 
                         smfpi * lmfpi / (smfpi + lmfpi) + smfpi_1 * lmfpi_1 / (smfpi_1 + lmfpi_1) 
                        );
 
-            // state.CList(i) = colcoeff * Rhoi_2 * params.dis_ratio * params.sigma * vi_3 * vloss2ratioi * (1 + vloss2ratioi) * std::exp(-vloss2ratioi);
+            state.CList(i) = params.if_brem ? (params.brem_prefactor * Rhoi_2 * vi * bremIntInterp(vi)) : 0.0;
         }
     }
     
@@ -664,7 +657,7 @@ private:
                  << state.RhoList.transpose() << '\n'
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
-                 << state.LList.transpose() << '\n';
+                 << state.LList.transpose() << '\n'
                  << state.CList.transpose() << '\n';
         }
     }
@@ -678,20 +671,33 @@ private:
         // Filenames follow the same convention as other input lists
         std::string nameVdi = params.inputDir + "vdiList-" + params.tag + ".txt";
         std::string nameBi  = params.inputDir + "biList-"  + params.tag + ".txt";
+        std::string nameBm  = params.inputDir + "bmList-"  + params.tag + ".txt";
 
         try {
             vd_grid = fileManager.readMatrix(nameVdi).array();
             bi_grid = fileManager.readMatrix(nameBi).array();
+            bm_grid = fileManager.readMatrix(nameBm).array();
         } catch (const std::exception& e) {
-            logger.error("Failed to read vdi/bi lookup tables: " + std::string(e.what()));
+            logger.error("Failed to read vdi/bi/bm lookup tables: " + std::string(e.what()));
             throw;
         }
 
-        if (vd_grid.size() == 0 || bi_grid.size() == 0) {
+        if (vd_grid.size() == 0 || bi_grid.size() == 0 || bm_grid.size() == 0) {
             throw std::runtime_error("vdi/bi lookup tables are empty.");
         }
         if (vd_grid.size() != bi_grid.size()) {
+            std::ostringstream oss;
+            oss << "Size mismatch between vdiList and biList: vdi size=" << vd_grid.size()
+                << ", bi size=" << bi_grid.size();
+            logger.error(oss.str());
             throw std::runtime_error("Size mismatch between vdiList and biList.");
+        }
+        if (vd_grid.size() != bm_grid.size()) {
+            std::ostringstream oss;
+            oss << "Size mismatch between vdiList and bmList: vdi size=" << vd_grid.size()
+                << ", bm size=" << bm_grid.size() << "\n";
+            logger.error(oss.str());
+            throw std::runtime_error("Size mismatch between vdiList and bmList.");
         }
 
         logger.info("Loaded big_int lookup tables with " +
@@ -748,6 +754,57 @@ private:
         double ly  = ly0 + t * (ly1 - ly0);
         return std::exp(ly);
     }
+
+    // Simple log–log interpolation for brem_int as a function of vd
+    // vd is the dimensionless velocity in units of v_fid
+    double bremIntInterp(double vd) const {
+        if (vd_grid.size() == 0) {
+            throw std::runtime_error("bremIntInterp called before vdi/bi tables were loaded.");
+        }
+        if (vd <= 0.0) {
+            throw std::runtime_error("bremIntInterp: vd must be positive for log interpolation.");
+        }
+
+        // Assume table sorted ascending in vd
+        if (vd <= vd_grid(0)) {
+            return bm_grid(0);
+        }
+        int n = static_cast<int>(vd_grid.size());
+        if (vd >= vd_grid(n - 1)) {
+            return bm_grid(n - 1);
+        }
+
+        // Binary search for the interval [left, right] with
+        // vd_grid[left] <= vd <= vd_grid[right]
+        int left = 0;
+        int right = n - 1;
+        while (right - left > 1) {
+            int mid = (left + right) / 2;
+            if (vd_grid(mid) > vd) {
+                right = mid;
+            } else {
+                left = mid;
+            }
+        }
+
+        double x  = std::log(vd);
+        double x0 = std::log(vd_grid(left));
+        double x1 = std::log(vd_grid(right));
+        double y0 = bm_grid(left);
+        double y1 = bm_grid(right);
+
+        // If values are not positive, fall back to linear interpolation
+        if (y0 <= 0.0 || y1 <= 0.0) {
+            double t_lin = (vd - vd_grid(left)) / (vd_grid(right) - vd_grid(left));
+            return y0 + t_lin * (y1 - y0);
+        }
+
+        double ly0 = std::log(y0);
+        double ly1 = std::log(y1);
+        double t   = (x - x0) / (x1 - x0);
+        double ly  = ly0 + t * (ly1 - ly0);
+        return std::exp(ly);
+    }
 };
 
 // -------------------- Basic 解析：严格版（缺键就抛错） --------------------
@@ -760,6 +817,13 @@ static inline std::string rtrim(std::string s){
 static inline std::string trim(std::string s){ return rtrim(ltrim(std::move(s))); }
 static inline std::string lower(std::string s){
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){return std::tolower(c);}); return s;
+}
+
+static bool parse_bool01(std::string s){
+    s = lower(trim(std::move(s)));
+    if (s == "1" || s == "true" || s == "yes" || s == "on")  return true;
+    if (s == "0" || s == "false"|| s == "no"  || s == "off") return false;
+    throw std::runtime_error("Bad boolean (expect 0/1 or true/false): " + s);
 }
 
 static std::unordered_map<std::string,std::string>
@@ -825,10 +889,11 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     P.c          = reqd("c");
     P.sigma_0    = reqd("sigma_0");
     P.omega      = reqd("omega");
+    P.brem_prefactor = reqd("brem_prefactor");
     P.mass_norm  = reqd("baryon_plummer_mass_norm");
+    P.if_brem = parse_bool01(reqs("if_brem"));
+    P.if_anni = parse_bool01(reqs("if_anni"));
     P.scale_norm = reqd("baryon_plummer_ars");
-    //P.dis_ratio  = reqd("dis_ratio");
-    //P.v_loss     = reqd("v_loss");
     P.age_of_universe = reqd("default_age_of_universe");
     P.epsilon    = reqd("epsilon");
 
@@ -840,9 +905,10 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     P.outputFile= dir + "result-" + P.tag + ".txt";
 
     logger.info("Loaded Basic: " + basic_path);
-    logger.debug("tag=" + P.tag + ", a=" + std::to_string(P.a) + // ", b=" + std::to_string(P.b) +
-                 ", c=" + std::to_string(P.c) + ", sigma_0=" + std::to_string(P.sigma_0) +
+    logger.debug("tag=" + P.tag + ", a=" + std::to_string(P.a) +
+                 ", c=" + std::to_string(P.c) + ", sigma_0=" + std::to_string(P.sigma_0) + ", omega=" + std::to_string(P.omega) + 
                  ", mass_norm=" + std::to_string(P.mass_norm) + ", scale_norm=" + std::to_string(P.scale_norm) +
+                 ", if_brem=" + std::string(P.if_brem ? "1" : "0") + ", if_anni=" + std::string(P.if_anni ? "1" : "0") +
                  (P.totalTime!=0.0 ? (", t="+std::to_string(P.totalTime)) : ""));
 }
 

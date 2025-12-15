@@ -20,12 +20,12 @@ N_proc = 6
 base_path = "./test"
 
 # Output name
-my_tag = "2205.02957fig64"
+my_tag = "2205.03392.fig5bremtest"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
-rho_s     = 4.2e6 * nu.mSun / nu.kpc**3
-r_s       = 24.54 * nu.kpc
+rho_s     = 2.74e8 * nu.mSun / nu.kpc**3
+r_s       = 0.141 * nu.kpc
 sigma_fid = 1 / rho_s / r_s
 v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
 lumi_fid  = mp.power(4 * mp.pi * rho_s * r_s**2, 5/2) * mp.power(nu.G_Newton, 3/2)
@@ -36,34 +36,33 @@ C_fid     = mp.power(4 * mp.pi * nu.G_Newton, 3/2) * mp.power(rho_s, 5/2) * r_s*
 # a,b,c are the parameters for the SIDM conductivity terms
 a = mp.mpf('2.257')
 # b = mp.mpf('1.385')
-c = mp.mpf('0.6')
+c = mp.mpf('0.75')
 # my_mass_norm is the normalized baryon mass, M_b/(4*pi*rho_s*r_s^3)
 my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
 my_scale_norm = mp.mpf('0.1')
 
 # The following are all the velocity-dependent parameters.
-m_chi = 1 * nu.GeV       # DM mass
-# m_V = 1e10 * nu.keV    # mediator mass
-omega = 1.0 * v_fid   # mass ratio
-m_V = omega * m_chi
-#alpha_chi = 1e-4
-#g_chi = mp.sqrt(4 * mp.pi * alpha_chi)          # coupling constant
+# MODEL PARAMETERS FOR THE INPUT!
+m_chi = 9.7 * nu.GeV     # DM mass
+m_V = 32.0 * nu.keV    # mediator mass
+alpha_chi = 1e-6
+# Induced Equations
+omega = m_V / m_chi    # mass ratio
+g_chi = mp.sqrt(4 * mp.pi * alpha_chi)          # coupling constant
 # omega as a velocity also needs to be converted
 my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
-#sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
-# sigma_0 = 30.0 * nu.cm**2 / nu.gram
-sigma_0 = sigma_fid * 0.01
-g_chi = (4 * mp.pi * m_chi**2 * omega**4 * m_chi * sigma_0)**(1/4)
-print(g_chi)
+sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
 my_sigma_0 = sigma_0 / sigma_fid
 # sigma_1 is g_chi^4/m_chi^3 - which is in similar form of sigma_0.
 sigma_1 = g_chi**4 / m_chi**3
 my_sigma_1 = sigma_1 / sigma_fid
 my_cs_type = "ruth"
-if_brem = False
+if_brem = True
 if_anni = False
+
+brem_prefactor = g_chi**6 / m_chi**3 / 96 / mp.power(mp.pi, 7/2) / sigma_fid / v_fid**2    # Need 1/v_fid**2 to balance the fiducial values.
 
 # 1D Lagragian zone parameters
 r_min = mp.mpf('0.005')  # default 10^-4
@@ -74,7 +73,7 @@ extra_layer = 10
 
 # simulation parameters
 epsilon = 0.001   # ε = max(|delta u / u|)
-default_age_of_universe_in_gyr = 2e10   # simulation time limit in gyr
+default_age_of_universe_in_gyr = 20   # simulation time limit in gyr
 my_default_age_of_universe = default_age_of_universe_in_gyr * 1e9 * nu.year / t_fid  # renormalized
 
 
@@ -286,7 +285,7 @@ def brem_int(vd):
     zeta = v_min / vd
     def inner_int(t):
         a = zeta / t
-        x_max = 1
+        x_max = mp.mpf('1.0')
         x_min = a**2
         def f(x):
             return (1 + 0.5 * a**4 / x**2) * mp.sqrt(1 - a**4 / x**2) * 2 * mp.atanh(mp.sqrt(1 - x))
@@ -296,8 +295,7 @@ def brem_int(vd):
 def cooling_brem(r_val, mass_norm, ars):   # all in fidutical values
     vd = vd_dm(r_val, mass_norm, ars)
     rho = density_dm(r_val)
-    prefactor = rho**2 * g_chi**2 * my_sigma_1 / 96 / mp.power(mp.pi, 7/2) * vd / v_fid**2  # Need 1/v_fid**2 to balance the fiducial values.
-    return prefactor * brem_int(vd)
+    return brem_prefactor * rho**2 * vd * brem_int(vd)
 
 def brem_int_for_pool(vd):
     # 单独封装一层, 方便序列化
@@ -361,20 +359,66 @@ def calculate_lists():
         # tabulate brems 2D 积分（得到的是 python float 列表）
         brem_int_sample = precompute_brem_table()
 
-        # ---- 关键：把 mpmath / float 列表变成 numpy float 数组再做 log + 插值 ----
-        vd_sample_np   = np.array([float(v) for v in vd_sample], dtype=float)
-        brem_sample_np = np.array(brem_int_sample, dtype=float)
+        def build_piecewise_interpolator(x_grid, y_grid, *, name="table"):
+            x = np.asarray(x_grid, dtype=float)
+            y = np.asarray(y_grid, dtype=float)
 
-        brem_interp = interp1d(np.log(vd_sample_np), np.log(brem_sample_np),
-                            kind='cubic', fill_value='extrapolate')
+            # Keep only finite points with x>0; do not filter on y sign.
+            keep = np.isfinite(x) & (x > 0.0) & np.isfinite(y)
+            x = x[keep]
+            y = y[keep]
 
-        def brem_from_table(vd):
-            return float(np.exp(brem_interp(np.log(float(vd)))))
+            if x.size < 2:
+                def _zero(_x):
+                    return 0.0
+                return _zero
+
+            # Ensure ascending x
+            order = np.argsort(x)
+            x = x[order]
+            y = y[order]
+
+            def y_of_x(xval):
+                xv = float(xval)
+                if (not np.isfinite(xv)) or (xv <= 0.0):
+                    return 0.0
+
+                # Clamp to endpoints
+                if xv <= x[0]:
+                    return float(y[0])
+                if xv >= x[-1]:
+                    return float(y[-1])
+
+                # Bracket index: x[i0] <= xv < x[i1]
+                i1 = int(np.searchsorted(x, xv, side="right"))
+                i0 = i1 - 1
+
+                x0, x1 = x[i0], x[i1]
+                y0, y1 = y[i0], y[i1]
+
+                # Linear fallback (always defined if x0!=x1)
+                t_lin = (xv - x0) / (x1 - x0)
+
+                # Log–log only if both endpoints positive
+                if (y0 > 0.0) and (y1 > 0.0) and (x0 > 0.0) and (x1 > 0.0):
+                    lx  = np.log(xv)
+                    lx0 = np.log(x0)
+                    lx1 = np.log(x1)
+                    t   = (lx - lx0) / (lx1 - lx0)
+
+                    ly0 = np.log(y0)
+                    ly1 = np.log(y1)
+                    return float(np.exp(ly0 + t * (ly1 - ly0)))
+
+                return float(y0 + t_lin * (y1 - y0))
+
+            return y_of_x
+    
+        brem_from_table = build_piecewise_interpolator(vd_sample, brem_int_sample, name="brem_int")
         def cooling_brem_from_table(r_val, mass_norm, ars):
             vd = vd_dm(r_val, mass_norm, ars)
             rho = density_dm(r_val)
-            prefactor = rho**2 * g_chi**2 * my_sigma_1 / (96 * mp.pi**(7/2)) * vd / v_fid**2
-            return prefactor * brem_from_table(vd)
+            return brem_prefactor * rho**2 * vd * brem_from_table(vd)
 
         c_list = [cooling_brem_from_table(r, my_mass_norm, my_scale_norm) for r in r_list2]
         
@@ -463,6 +507,9 @@ def export_data(results, my_tag=None):
         f"Extra shell = {extra_layer}",
         f"baryon_Plummer_mass_norm = {float(my_mass_norm)}",
         f"baryon_Plummer_ars = {float(my_scale_norm)}",
+        f"brem_prefactor = {float(brem_prefactor)}",
+        f"if_brem = {int(bool(if_brem))}",
+        f"if_anni = {int(bool(if_anni))}",
         "## Age of Universe in fidutical time. Epsilon for |u| / u <= epsilon ##",
         f"default_age_of_universe = {float(my_default_age_of_universe)}",
         f"epsilon = {float(epsilon)}",
@@ -470,7 +517,8 @@ def export_data(results, my_tag=None):
         f"r_s_in_nu = {float(r_s)}",  # in natural units
         f"rho_s_in_nu = {float(rho_s)}", # in natural units
         f"m_chi_in_GeV = {float(m_chi / nu.GeV)}",
-        f"m_V_in_MeV = {float(m_V / nu.MeV)}"
+        f"m_V_in_MeV = {float(m_V / nu.MeV)}",
+        f"alpha_chi = {float(alpha_chi)}"
     ]
     
     # Write basic info
@@ -478,6 +526,15 @@ def export_data(results, my_tag=None):
     with open(basic_file, 'w') as f:
         f.write('\n'.join(basic_info))
     
+    # NOTE: values smaller than the smallest *normal* double (DBL_MIN ~ 2.225e-308)
+    # can cause `std::istringstream >> double` to fail on some macOS/libc++ setups.
+    # We clamp such subnormal nonzero values to 0.0 for exported lookup tables.
+    _dbl_min_normal = np.finfo(float).tiny  # ~= 2.2250738585072014e-308
+    def _clamp_subnormal_to_zero(v):
+        vv = float(mp.re(v))
+        if 0.0 < abs(vv) < _dbl_min_normal:
+            return 0.0
+        return vv
     # Convert mpmath values to strings for export with 10 effective digits
     # Use mp.re to extract real part if values are complex
     r_list_str = [f"{float(mp.re(r)):.10g}" for r in results['r_list1_trunc']] + ['']
@@ -489,9 +546,9 @@ def export_data(results, my_tag=None):
     # big integral (big_int) and brem integral (brem_int) calculated at vd points:
     vd_sample_list_str = [f"{float(mp.re(vdi)):.10g}" for vdi in results['vd_sample']] + ['']
     big_int_list_str = [f"{float(mp.re(l)):.10g}" for l in results['big_int_sample']] + ['']
-    brem_int_list_str = [f"{float(mp.re(l)):.10g}" for l in results['brem_int_sample']] + ['']
+    brem_int_list_str = [f"{_clamp_subnormal_to_zero(l):.10g}" for l in results['brem_int_sample']] + ['']
 
-    c_list_str = [f"{float(mp.re(c)):.10g}" for c in results['c_list_trunc']] + ['']
+    c_list_str = [f"{_clamp_subnormal_to_zero(c):.10g}" for c in results['c_list_trunc']] + ['']
     
     # Write data files with full paths
     r_file = os.path.join(output_dir, f"RList-{my_tag}.txt")
