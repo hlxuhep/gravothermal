@@ -17,6 +17,7 @@
 #include <optional>
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <Eigen/Dense>
 
 // Forward declarations
@@ -76,10 +77,12 @@ public:
     double sigma_0;
     double omega;
     double brem_prefactor;
+    double anni_prefactor;
     double mass_norm;
     double scale_norm;
     double age_of_universe;
     double epsilon;
+    double epsilonRho;
     bool if_brem;
     bool if_anni;
 
@@ -91,10 +94,10 @@ public:
     SimulationParameters()
         : totalStep(DEFAULT_TOTAL_STEPS),
           saveStep(DEFAULT_SAVE_STEPS),
-          // epsilon(DEFAULT_EPSILON),
           totalTime(0.0)
     {
         epsilon = 0.0;
+        epsilonRho = 0.0;
         if_brem = false;
         if_anni = false;
         // 重要：不再设置 a,c,sigma_0,mass_norm,scale_norm,tag,inputDir,outputFile
@@ -203,6 +206,7 @@ public:
     Eigen::ArrayXd uList;      // Specific internal energy
     Eigen::ArrayXd LList;      // Luminosity
     Eigen::ArrayXd CList;      // Cooling rate
+    Eigen::ArrayXd AnList;     // Annihilation rate
     Eigen::ArrayXd vList;      // 1D Velocity dispersion
     Eigen::ArrayXd pList;      // Pressure
     Eigen::ArrayXd aList;      // Adiabatic variable
@@ -221,6 +225,7 @@ public:
             std::string nameu   = params.inputDir + "uList-"   + params.tag + ".txt";
             std::string nameL   = params.inputDir + "LList-"   + params.tag + ".txt";
             std::string nameC   = params.inputDir + "CList-"   + params.tag + ".txt";
+            std::string nameAn   = params.inputDir + "AnniList-"   + params.tag + ".txt";
             
             RList   = fileManager.readMatrix(nameR).array();
             RhoList = fileManager.readMatrix(nameRho).array();
@@ -228,6 +233,7 @@ public:
             uList   = fileManager.readMatrix(nameu).array();
             LList   = fileManager.readMatrix(nameL).array();
             CList   = fileManager.readMatrix(nameC).array();
+            AnList   = fileManager.readMatrix(nameAn).array();
             
             NoLayers = RList.rows();
             
@@ -284,7 +290,9 @@ private:
     
     // Helper arrays for evolution calculations
     Eigen::ArrayXd deltaUcoeff;
+    Eigen::ArrayXd deltaRhoannicoeff;
     Eigen::ArrayXd deltaU;
+    Eigen::ArrayXd deltaM;
     Eigen::ArrayXd hydrostaticI;
     Eigen::ArrayXd hydrostaticM;
     Eigen::ArrayXd hydrostaticF;
@@ -297,6 +305,7 @@ private:
     Eigen::ArrayXd vd_grid;  // vd grid
     Eigen::ArrayXd bi_grid;  // big_int(vd) on that grid
     Eigen::ArrayXd bm_grid;  // brem_int(vd) on that grid
+    Eigen::ArrayXd ai_grid;  // anni_int(vd) on that grid
 
 public:
     Simulator(const SimulationParameters& p, 
@@ -309,21 +318,23 @@ public:
     void initialize() {
         state.initialize(params, fileManager, logger);
 
-        // Load precomputed big_int(vd) lookup tables (vdiList-/biList-)
-        loadBigIntTable();
+        // Load precomputed big_int(vd), brem_int(vd) and anni_int(vd) lookup tables (vdiList-/biList-/bmList-/anList-)
+        loadBigTables();
         
-        int NoLayers = state.NoLayers;
-        deltaUcoeff = Eigen::ArrayXd::Zero(NoLayers);
-        deltaU      = Eigen::ArrayXd::Zero(NoLayers);
-        hydrostaticI= Eigen::ArrayXd::Zero(NoLayers);
-        hydrostaticM= Eigen::ArrayXd::Zero(NoLayers);
-        hydrostaticF= Eigen::ArrayXd::Zero(NoLayers);
-        
+        int  NoLayers = state.NoLayers;
+        deltaUcoeff   = Eigen::ArrayXd::Zero(NoLayers);
+        deltaRhoannicoeff = Eigen::ArrayXd::Zero(NoLayers);
+        deltaU        = Eigen::ArrayXd::Zero(NoLayers);
+        deltaM        = Eigen::ArrayXd::Zero(NoLayers);
+        hydrostaticI  = Eigen::ArrayXd::Zero(NoLayers);
+        hydrostaticM  = Eigen::ArrayXd::Zero(NoLayers);
+        hydrostaticF  = Eigen::ArrayXd::Zero(NoLayers);
         Hydromat = Eigen::MatrixXd::Zero((NoLayers-1), (NoLayers-1));
         Hydrob   = Eigen::VectorXd::Zero(NoLayers-1);
         deltaR   = Eigen::VectorXd::Zero(NoLayers-1);
         deltap   = Eigen::VectorXd::Zero(NoLayers-1);
         deltaRho = Eigen::VectorXd::Zero(NoLayers-1);
+
         
         std::ofstream file(params.outputFile, std::ofstream::out | std::ofstream::app);
         if (file.is_open()) {
@@ -347,7 +358,8 @@ public:
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
                  << state.LList.transpose() << '\n'
-                 << state.CList.transpose() << '\n';
+                 << state.CList.transpose() << '\n'
+                 << state.AnList.transpose() << '\n';
         }
         file.close();
         
@@ -398,23 +410,51 @@ private:
     double performConductionStep() {
         int NoLayers = state.NoLayers;
         
-        deltaUcoeff(0) = - ((state.LList(0) / state.MList(0))) / state.uList(0) + state.CList(0) / state.RhoList(0);
+        deltaUcoeff(0) = - ((state.LList(0) / state.MList(0)) + state.CList(0) / state.RhoList(0)) / state.uList(0);
+        deltaRhoannicoeff(0) = state.AnList(0) / state.RhoList(0);
+        
         for (int i = 1; i < (NoLayers-1); i++) {
             deltaUcoeff(i) = -((state.LList(i) - state.LList(i-1)) / (state.MList(i) - state.MList(i-1)) 
                                ) / state.uList(i) + state.CList(i) / state.RhoList(i);
+            deltaRhoannicoeff(i) = state.AnList(i) / state.RhoList(i);
         }
+
+        // △rho = -A △t < epsilon * rho
         
-        double deltat = params.epsilon / (deltaUcoeff.abs().maxCoeff());
+        double maxU = deltaUcoeff.abs().maxCoeff();
+        double maxR = deltaRhoannicoeff.abs().maxCoeff();
+
+        double deltat1 = (maxU > 0.0) ? params.epsilon    / maxU :std::numeric_limits<double>::infinity();
+        double deltat2 = (maxR > 0.0) ? params.epsilonRho / maxR : std::numeric_limits<double>::infinity();
+        double deltat  = std::min(deltat1, deltat2);
         
         deltaU = deltaUcoeff * state.uList * deltat;
         state.uList += deltaU;
+
+        double Rho0_2 = state.RhoList(0) * state.RhoList(0);
+        double R0_3 = state.RList(0) * state.RList(0) * state.RList(0);
+
+        state.RhoList(0) += -state.AnList(0) * deltat;
+        deltaM(0) = - R0_3 / 3.0 * state.AnList(0) * deltat;
+
+        for (int i = 1; i < (NoLayers-1); i++) {
+            double Rhoi_2 = state.RhoList(i) * state.RhoList(i);
+            double Ri_3 = state.RList(i) * state.RList(i) * state.RList(i);
+            double Ri_1_3 = state.RList(i-1) * state.RList(i-1) * state.RList(i-1);
+            state.RhoList(i) += -state.AnList(i) * deltat;
+            deltaM(i) = deltaM(i-1) - (Ri_3 - Ri_1_3) / 3.0 * state.AnList(i) * deltat;
+        }
+        deltaM(NoLayers-1) = deltaM(NoLayers-2);
+
+        state.MList   += deltaM;
+        state.MhyList += deltaM;
         
         state.pList = (2.0/3.0) * (state.RhoList * state.uList);
         state.aList = (2.0/3.0) * (state.RhoList.pow(-2.0/3.0) * state.uList);
         
         return deltat;
     }
-    
+
     void performRelaxationStep() {
         int NoLayers = state.NoLayers;
         
@@ -616,6 +656,8 @@ private:
                        );
 
         state.CList(0) = params.if_brem ? (params.brem_prefactor * Rho0_2 * v0 * bremIntInterp(v0)) : 0.0 ;
+
+        state.AnList(0) = params.if_anni ? (params.anni_prefactor * Rho0_2 * anniIntInterp(v0)) : 0;
         
         for (int i = 1; i < (NoLayers-1); i++) {
             double Ri = state.RList(i);
@@ -647,6 +689,8 @@ private:
                        );
 
             state.CList(i) = params.if_brem ? (params.brem_prefactor * Rhoi_2 * vi * bremIntInterp(vi)) : 0.0;
+
+            state.AnList(i) = params.if_anni ? (params.anni_prefactor * Rhoi_2 * anniIntInterp(vi)) : 0;
         }
     }
     
@@ -658,7 +702,8 @@ private:
                  << state.MList.transpose() << '\n'
                  << state.uList.transpose() << '\n'
                  << state.LList.transpose() << '\n'
-                 << state.CList.transpose() << '\n';
+                 << state.CList.transpose() << '\n'
+                 << state.AnList.transpose() << '\n';
         }
     }
 
@@ -667,23 +712,25 @@ private:
     // ---------------------------------------------------------------------
 
     // Load precomputed big_int(vd) lookup tables from files
-    void loadBigIntTable() {
+    void loadBigTables() {
         // Filenames follow the same convention as other input lists
-        std::string nameVdi = params.inputDir + "vdiList-" + params.tag + ".txt";
-        std::string nameBi  = params.inputDir + "biList-"  + params.tag + ".txt";
-        std::string nameBm  = params.inputDir + "bmList-"  + params.tag + ".txt";
+        std::string nameVdi = params.inputDir + "vdiList-" + params.tag + ".txt"; // vdi = vd for int
+        std::string nameBi  = params.inputDir + "biList-"  + params.tag + ".txt"; // bi = big_int
+        std::string nameBm  = params.inputDir + "bmList-"  + params.tag + ".txt"; // bm = brem_int
+        std::string nameAi  = params.inputDir + "aiList-"  + params.tag + ".txt"; // ai = anni_int
 
         try {
             vd_grid = fileManager.readMatrix(nameVdi).array();
             bi_grid = fileManager.readMatrix(nameBi).array();
             bm_grid = fileManager.readMatrix(nameBm).array();
+            ai_grid = fileManager.readMatrix(nameAi).array();
         } catch (const std::exception& e) {
-            logger.error("Failed to read vdi/bi/bm lookup tables: " + std::string(e.what()));
+            logger.error("Failed to read vdi/bi/bm/ai lookup tables: " + std::string(e.what()));
             throw;
         }
 
-        if (vd_grid.size() == 0 || bi_grid.size() == 0 || bm_grid.size() == 0) {
-            throw std::runtime_error("vdi/bi lookup tables are empty.");
+        if (vd_grid.size() == 0 || bi_grid.size() == 0 || bm_grid.size() == 0 || ai_grid.size() == 0) {
+            throw std::runtime_error("vdi/bi/bm/ai lookup tables are empty.");
         }
         if (vd_grid.size() != bi_grid.size()) {
             std::ostringstream oss;
@@ -699,28 +746,46 @@ private:
             logger.error(oss.str());
             throw std::runtime_error("Size mismatch between vdiList and bmList.");
         }
+        if (vd_grid.size() != ai_grid.size()) {
+            std::ostringstream oss;
+            oss << "Size mismatch between vdiList and bmList: vdi size=" << vd_grid.size()
+                << ", ai size=" << ai_grid.size() << "\n";
+            logger.error(oss.str());
+            throw std::runtime_error("Size mismatch between vdiList and aiList.");
+        }
 
-        logger.info("Loaded big_int lookup tables with " +
+        logger.info("Loaded integration lookup tables with " +
                     std::to_string(vd_grid.size()) + " points.");
     }
 
-    // Simple log–log interpolation for big_int as a function of vd
-    // vd is the dimensionless velocity in units of v_fid
-    double bigIntInterp(double vd) const {
+    // ---------------------------------------------------------------------
+    //  Unified log–log interpolation helper for tables defined on vd_grid
+    //  vd is the dimensionless velocity in units of v_fid
+    // ---------------------------------------------------------------------
+    double logLogInterpOnVdGrid(double vd, const Eigen::ArrayXd& y_grid, const char* what) const {
         if (vd_grid.size() == 0) {
-            throw std::runtime_error("bigIntInterp called before vdi/bi tables were loaded.");
+            throw std::runtime_error(std::string(what) + ": vd_grid not loaded.");
+        }
+        if (y_grid.size() == 0) {
+            throw std::runtime_error(std::string(what) + ": y_grid is empty.");
+        }
+        if (y_grid.size() != vd_grid.size()) {
+            std::ostringstream oss;
+            oss << what << ": size mismatch: vd_grid size=" << vd_grid.size()
+                << ", y_grid size=" << y_grid.size();
+            throw std::runtime_error(oss.str());
         }
         if (vd <= 0.0) {
-            throw std::runtime_error("bigIntInterp: vd must be positive for log interpolation.");
+            throw std::runtime_error(std::string(what) + ": vd must be positive for log interpolation.");
         }
 
         // Assume table sorted ascending in vd
         if (vd <= vd_grid(0)) {
-            return bi_grid(0);
+            return y_grid(0);
         }
         int n = static_cast<int>(vd_grid.size());
         if (vd >= vd_grid(n - 1)) {
-            return bi_grid(n - 1);
+            return y_grid(n - 1);
         }
 
         // Binary search for the interval [left, right] with
@@ -739,8 +804,8 @@ private:
         double x  = std::log(vd);
         double x0 = std::log(vd_grid(left));
         double x1 = std::log(vd_grid(right));
-        double y0 = bi_grid(left);
-        double y1 = bi_grid(right);
+        double y0 = y_grid(left);
+        double y1 = y_grid(right);
 
         // If values are not positive, fall back to linear interpolation
         if (y0 <= 0.0 || y1 <= 0.0) {
@@ -755,55 +820,19 @@ private:
         return std::exp(ly);
     }
 
-    // Simple log–log interpolation for brem_int as a function of vd
-    // vd is the dimensionless velocity in units of v_fid
+    // Wrapper: big_int(vd)
+    double bigIntInterp(double vd) const {
+        return logLogInterpOnVdGrid(vd, bi_grid, "bigIntInterp");
+    }
+
+    // Wrapper: brem_int(vd)
     double bremIntInterp(double vd) const {
-        if (vd_grid.size() == 0) {
-            throw std::runtime_error("bremIntInterp called before vdi/bi tables were loaded.");
-        }
-        if (vd <= 0.0) {
-            throw std::runtime_error("bremIntInterp: vd must be positive for log interpolation.");
-        }
+        return logLogInterpOnVdGrid(vd, bm_grid, "bremIntInterp");
+    }
 
-        // Assume table sorted ascending in vd
-        if (vd <= vd_grid(0)) {
-            return bm_grid(0);
-        }
-        int n = static_cast<int>(vd_grid.size());
-        if (vd >= vd_grid(n - 1)) {
-            return bm_grid(n - 1);
-        }
-
-        // Binary search for the interval [left, right] with
-        // vd_grid[left] <= vd <= vd_grid[right]
-        int left = 0;
-        int right = n - 1;
-        while (right - left > 1) {
-            int mid = (left + right) / 2;
-            if (vd_grid(mid) > vd) {
-                right = mid;
-            } else {
-                left = mid;
-            }
-        }
-
-        double x  = std::log(vd);
-        double x0 = std::log(vd_grid(left));
-        double x1 = std::log(vd_grid(right));
-        double y0 = bm_grid(left);
-        double y1 = bm_grid(right);
-
-        // If values are not positive, fall back to linear interpolation
-        if (y0 <= 0.0 || y1 <= 0.0) {
-            double t_lin = (vd - vd_grid(left)) / (vd_grid(right) - vd_grid(left));
-            return y0 + t_lin * (y1 - y0);
-        }
-
-        double ly0 = std::log(y0);
-        double ly1 = std::log(y1);
-        double t   = (x - x0) / (x1 - x0);
-        double ly  = ly0 + t * (ly1 - ly0);
-        return std::exp(ly);
+    // Wrapper: anni_int(vd)
+    double anniIntInterp(double vd) const {
+        return logLogInterpOnVdGrid(vd, ai_grid, "anniIntInterp");
     }
 };
 
@@ -890,12 +919,14 @@ static void load_from_basic(const std::string& basic_path, SimulationParameters&
     P.sigma_0    = reqd("sigma_0");
     P.omega      = reqd("omega");
     P.brem_prefactor = reqd("brem_prefactor");
+    P.anni_prefactor = reqd("anni_prefactor");
     P.mass_norm  = reqd("baryon_plummer_mass_norm");
     P.if_brem = parse_bool01(reqs("if_brem"));
     P.if_anni = parse_bool01(reqs("if_anni"));
     P.scale_norm = reqd("baryon_plummer_ars");
     P.age_of_universe = reqd("default_age_of_universe");
     P.epsilon    = reqd("epsilon");
+    P.epsilonRho = reqd("epsilonrho");
 
     // derive paths from Basic location
     size_t slash = basic_path.find_last_of("/\\");

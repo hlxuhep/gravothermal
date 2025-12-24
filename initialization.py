@@ -20,13 +20,14 @@ N_proc = 6
 base_path = "./test"
 
 # Output name
-my_tag = "2205.03392.fig5bremtest"
+my_tag = "brem_test_2"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
 rho_s     = 2.74e8 * nu.mSun / nu.kpc**3
 r_s       = 0.141 * nu.kpc
 sigma_fid = 1 / rho_s / r_s
+M_fid     = 4.0 * mp.pi * rho_s * r_s**3
 v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
 lumi_fid  = mp.power(4 * mp.pi * rho_s * r_s**2, 5/2) * mp.power(nu.G_Newton, 3/2)
 t_fid     = 1 / mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s)
@@ -44,9 +45,9 @@ my_scale_norm = mp.mpf('0.1')
 
 # The following are all the velocity-dependent parameters.
 # MODEL PARAMETERS FOR THE INPUT!
-m_chi = 9.7 * nu.GeV     # DM mass
-m_V = 32.0 * nu.keV    # mediator mass
-alpha_chi = 1e-6
+m_chi = 1e5 * nu.GeV     # DM mass
+m_V = 0.1 * nu.keV    # mediator mass
+alpha_chi = 1
 # Induced Equations
 omega = m_V / m_chi    # mass ratio
 g_chi = mp.sqrt(4 * mp.pi * alpha_chi)          # coupling constant
@@ -59,10 +60,13 @@ my_sigma_0 = sigma_0 / sigma_fid
 sigma_1 = g_chi**4 / m_chi**3
 my_sigma_1 = sigma_1 / sigma_fid
 my_cs_type = "ruth"
-if_brem = True
+if_brem = False
 if_anni = False
 
 brem_prefactor = g_chi**6 / m_chi**3 / 96 / mp.power(mp.pi, 7/2) / sigma_fid / v_fid**2    # Need 1/v_fid**2 to balance the fiducial values.
+
+anni_prefactor = mp.sqrt(mp.pi) * alpha_chi**2  / 4 / m_chi**3 * rho_s * t_fid
+# rho**2 * anni_prefactor * anni_int = dM / dV / dt.  rho, M, V(=r^2 dr) and t are all normalized by fid values.
 
 # 1D Lagragian zone parameters
 r_min = mp.mpf('0.005')  # default 10^-4
@@ -73,6 +77,7 @@ extra_layer = 10
 
 # simulation parameters
 epsilon = 0.001   # ε = max(|delta u / u|)
+epsilonRho = 0.001  # εRho = max(|delta rho / rho|)
 default_age_of_universe_in_gyr = 20   # simulation time limit in gyr
 my_default_age_of_universe = default_age_of_universe_in_gyr * 1e9 * nu.year / t_fid  # renormalized
 
@@ -301,6 +306,23 @@ def brem_int_for_pool(vd):
     # 单独封装一层, 方便序列化
     return float(brem_int(vd))
 
+# annihilation
+def anni_int(vd):
+    def S(x):    # for Sommerfeld
+        y = 2 * mp.pi * x
+        return y / (1 - mp.e**(-y))
+    def integrand(t):
+        return t**2 * mp.e**(-t**2 / 4) * S(alpha_chi / t / vd / v_fid)
+    return mp.re(mp.quad(integrand, [0, mp.inf]))
+
+def annihilation_rate(r_val, mass_norm, ars):
+    vd = vd_dm(r_val, mass_norm, ars)
+    rho = density_dm(r_val)
+    return rho**2 * anni_prefactor * anni_int(vd)
+
+def anni_int_for_pool(vd):
+    return float(anni_int(vd))
+
 # Precompute big_int and brem_int on a velocity grid:
 # vd in units of v_fid, ranging from 1e-2 * v_fid to 1e2 * v_fid (dimensionless 1e-2 to 1e2)
 v_min = mp.mpf('1e-2')
@@ -316,6 +338,14 @@ def precompute_brem_table(n_proc = N_proc):
 
     with Pool(processes=n_proc) as pool:
         results = pool.map(brem_int_for_pool, vd_sample_brem)
+    return results
+
+def precompute_anni_table(n_proc = N_proc):
+    # 转成普通 float，避免 pickling mpmath 对象太重
+    vd_sample_anni = [float(v) for v in vd_sample]
+
+    with Pool(processes=n_proc) as pool:
+        results = pool.map(anni_int_for_pool, vd_sample_anni)
     return results
 
 # Create radius lists
@@ -355,65 +385,64 @@ def calculate_lists():
 
     big_int_sample  = [big_int(vd, my_omega, cs_type=my_cs_type) for vd in vd_sample]
 
+    def build_piecewise_interpolator(x_grid, y_grid, *, name="table"):
+        x = np.asarray(x_grid, dtype=float)
+        y = np.asarray(y_grid, dtype=float)
+
+        # Keep only finite points with x>0; do not filter on y sign.
+        keep = np.isfinite(x) & (x > 0.0) & np.isfinite(y)
+        x = x[keep]
+        y = y[keep]
+
+        if x.size < 2:
+            def _zero(_x):
+                return 0.0
+            return _zero
+
+        # Ensure ascending x
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+
+        def y_of_x(xval):
+            xv = float(xval)
+            if (not np.isfinite(xv)) or (xv <= 0.0):
+                return 0.0
+
+            # Clamp to endpoints
+            if xv <= x[0]:
+                return float(y[0])
+            if xv >= x[-1]:
+                return float(y[-1])
+
+            # Bracket index: x[i0] <= xv < x[i1]
+            i1 = int(np.searchsorted(x, xv, side="right"))
+            i0 = i1 - 1
+
+            x0, x1 = x[i0], x[i1]
+            y0, y1 = y[i0], y[i1]
+
+            # Linear fallback (always defined if x0!=x1)
+            t_lin = (xv - x0) / (x1 - x0)
+
+            # Log–log only if both endpoints positive
+            if (y0 > 0.0) and (y1 > 0.0) and (x0 > 0.0) and (x1 > 0.0):
+                lx  = np.log(xv)
+                lx0 = np.log(x0)
+                lx1 = np.log(x1)
+                t   = (lx - lx0) / (lx1 - lx0)
+
+                ly0 = np.log(y0)
+                ly1 = np.log(y1)
+                return float(np.exp(ly0 + t * (ly1 - ly0)))
+
+            return float(y0 + t_lin * (y1 - y0))
+
+        return y_of_x
+
     if if_brem:
         # tabulate brems 2D 积分（得到的是 python float 列表）
         brem_int_sample = precompute_brem_table()
-
-        def build_piecewise_interpolator(x_grid, y_grid, *, name="table"):
-            x = np.asarray(x_grid, dtype=float)
-            y = np.asarray(y_grid, dtype=float)
-
-            # Keep only finite points with x>0; do not filter on y sign.
-            keep = np.isfinite(x) & (x > 0.0) & np.isfinite(y)
-            x = x[keep]
-            y = y[keep]
-
-            if x.size < 2:
-                def _zero(_x):
-                    return 0.0
-                return _zero
-
-            # Ensure ascending x
-            order = np.argsort(x)
-            x = x[order]
-            y = y[order]
-
-            def y_of_x(xval):
-                xv = float(xval)
-                if (not np.isfinite(xv)) or (xv <= 0.0):
-                    return 0.0
-
-                # Clamp to endpoints
-                if xv <= x[0]:
-                    return float(y[0])
-                if xv >= x[-1]:
-                    return float(y[-1])
-
-                # Bracket index: x[i0] <= xv < x[i1]
-                i1 = int(np.searchsorted(x, xv, side="right"))
-                i0 = i1 - 1
-
-                x0, x1 = x[i0], x[i1]
-                y0, y1 = y[i0], y[i1]
-
-                # Linear fallback (always defined if x0!=x1)
-                t_lin = (xv - x0) / (x1 - x0)
-
-                # Log–log only if both endpoints positive
-                if (y0 > 0.0) and (y1 > 0.0) and (x0 > 0.0) and (x1 > 0.0):
-                    lx  = np.log(xv)
-                    lx0 = np.log(x0)
-                    lx1 = np.log(x1)
-                    t   = (lx - lx0) / (lx1 - lx0)
-
-                    ly0 = np.log(y0)
-                    ly1 = np.log(y1)
-                    return float(np.exp(ly0 + t * (ly1 - ly0)))
-
-                return float(y0 + t_lin * (y1 - y0))
-
-            return y_of_x
-    
         brem_from_table = build_piecewise_interpolator(vd_sample, brem_int_sample, name="brem_int")
         def cooling_brem_from_table(r_val, mass_norm, ars):
             vd = vd_dm(r_val, mass_norm, ars)
@@ -427,7 +456,24 @@ def calculate_lists():
         brem_int_sample = [0.0 for _ in vd_sample]
         c_list = [0.0 for r in r_list2]
 
+    if if_anni:
+        # tabulate brems 2D 积分（得到的是 python float 列表）
+        anni_int_sample = precompute_anni_table()
+        anni_from_table = build_piecewise_interpolator(vd_sample, anni_int_sample, name="anni_int")
+        def annihilation_rate_from_table(r_val, mass_norm, ars):
+            vd = vd_dm(r_val, mass_norm, ars)
+            rho = density_dm(r_val)
+            return rho**2 * anni_prefactor * anni_from_table(vd)
+
+        anni_list = [annihilation_rate_from_table(r, my_mass_norm, my_scale_norm) for r in r_list2]
+        
+    else:
+        # no annihilation: use zero tables with the same shape
+        anni_int_sample = [0.0 for _ in vd_sample]
+        anni_list = [0.0 for r in r_list2]
+
     c_list_trunc = c_list[:layer]
+    anni_list_trunc = anni_list[:layer]
     return {
         'r_list1_trunc': r_list1_trunc,
         'r_list2_trunc': r_list2_trunc,
@@ -438,9 +484,11 @@ def calculate_lists():
         'l_list_trunc': l_list_trunc,
         'kn_list_trunc': kn_list_trunc,
         'c_list_trunc': c_list_trunc,
+        'anni_list_trunc': anni_list_trunc,
         'vd_sample': vd_sample,
         'big_int_sample': big_int_sample,
-        'brem_int_sample': brem_int_sample
+        'brem_int_sample': brem_int_sample,
+        'anni_int_sample': anni_int_sample
     }
 
 def plot_results(results):
@@ -508,11 +556,13 @@ def export_data(results, my_tag=None):
         f"baryon_Plummer_mass_norm = {float(my_mass_norm)}",
         f"baryon_Plummer_ars = {float(my_scale_norm)}",
         f"brem_prefactor = {float(brem_prefactor)}",
+        f"anni_prefactor = {float(anni_prefactor)}",
         f"if_brem = {int(bool(if_brem))}",
         f"if_anni = {int(bool(if_anni))}",
         "## Age of Universe in fidutical time. Epsilon for |u| / u <= epsilon ##",
         f"default_age_of_universe = {float(my_default_age_of_universe)}",
         f"epsilon = {float(epsilon)}",
+        f"epsilonRho = {float(epsilonRho)}",
         "## Dimensional parameters are for readout and presentations ##",
         f"r_s_in_nu = {float(r_s)}",  # in natural units
         f"rho_s_in_nu = {float(rho_s)}", # in natural units
@@ -547,8 +597,10 @@ def export_data(results, my_tag=None):
     vd_sample_list_str = [f"{float(mp.re(vdi)):.10g}" for vdi in results['vd_sample']] + ['']
     big_int_list_str = [f"{float(mp.re(l)):.10g}" for l in results['big_int_sample']] + ['']
     brem_int_list_str = [f"{_clamp_subnormal_to_zero(l):.10g}" for l in results['brem_int_sample']] + ['']
+    anni_int_list_str = [f"{_clamp_subnormal_to_zero(l):.10g}" for l in results['anni_int_sample']] + ['']
 
     c_list_str = [f"{_clamp_subnormal_to_zero(c):.10g}" for c in results['c_list_trunc']] + ['']
+    anni_list_str = [f"{_clamp_subnormal_to_zero(a):.10g}" for a in results['anni_list_trunc']] + ['']
     
     # Write data files with full paths
     r_file = os.path.join(output_dir, f"RList-{my_tag}.txt")
@@ -582,10 +634,18 @@ def export_data(results, my_tag=None):
     brem_int_file = os.path.join(output_dir, f"bmList-{my_tag}.txt")
     with open(brem_int_file, 'w') as f:
         f.write('\n'.join(brem_int_list_str))
+    
+    anni_int_file = os.path.join(output_dir, f"aiList-{my_tag}.txt")
+    with open(anni_int_file, 'w') as f:
+        f.write('\n'.join(anni_int_list_str))
 
     c_file = os.path.join(output_dir, f"CList-{my_tag}.txt")
     with open(c_file, 'w') as f:
         f.write('\n'.join(c_list_str))
+    
+    anni_file = os.path.join(output_dir, f"AnniList-{my_tag}.txt")
+    with open(anni_file, 'w') as f:
+        f.write('\n'.join(anni_list_str))
     
     return output_dir
 
