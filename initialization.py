@@ -20,7 +20,7 @@ N_proc = 6
 base_path = "./test"
 
 # Output name
-my_tag = "brem_test_2"
+my_tag = "brem_test_1"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
@@ -60,7 +60,7 @@ my_sigma_0 = sigma_0 / sigma_fid
 sigma_1 = g_chi**4 / m_chi**3
 my_sigma_1 = sigma_1 / sigma_fid
 my_cs_type = "ruth"
-if_brem = False
+if_brem = True
 if_anni = False
 
 brem_prefactor = g_chi**6 / m_chi**3 / 96 / mp.power(mp.pi, 7/2) / sigma_fid / v_fid**2    # Need 1/v_fid**2 to balance the fiducial values.

@@ -415,7 +415,7 @@ private:
         
         for (int i = 1; i < (NoLayers-1); i++) {
             deltaUcoeff(i) = -((state.LList(i) - state.LList(i-1)) / (state.MList(i) - state.MList(i-1)) 
-                               ) / state.uList(i) + state.CList(i) / state.RhoList(i);
+            + state.CList(i) / state.RhoList(i)) / state.uList(i);
             deltaRhoannicoeff(i) = state.AnList(i) / state.RhoList(i);
         }
 
