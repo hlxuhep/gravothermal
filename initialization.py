@@ -24,8 +24,8 @@ my_tag = "brem_test_1"
 
 # Physical values with dimension
 # '_fid' parameters are in natural units, 'my_' parameters are remormalized by fids.
-rho_s     = 2.74e8 * nu.mSun / nu.kpc**3
-r_s       = 0.141 * nu.kpc
+rho_s     = 1.28e7 * nu.mSun / nu.kpc**3
+r_s       = 6.5 * nu.kpc
 sigma_fid = 1 / rho_s / r_s
 M_fid     = 4.0 * mp.pi * rho_s * r_s**3
 v_fid     = mp.sqrt(4 * mp.pi * nu.G_Newton * rho_s) * r_s
@@ -37,7 +37,7 @@ C_fid     = mp.power(4 * mp.pi * nu.G_Newton, 3/2) * mp.power(rho_s, 5/2) * r_s*
 # a,b,c are the parameters for the SIDM conductivity terms
 a = mp.mpf('2.257')
 # b = mp.mpf('1.385')
-c = mp.mpf('0.75')
+c = mp.mpf('0.60')
 # my_mass_norm is the normalized baryon mass, M_b/(4*pi*rho_s*r_s^3)
 my_mass_norm = mp.mpf('0.0')
 # my_scale_norm is the normalized baryon scale radius, a/r_s
@@ -46,8 +46,8 @@ my_scale_norm = mp.mpf('0.1')
 # The following are all the velocity-dependent parameters.
 # MODEL PARAMETERS FOR THE INPUT!
 m_chi = 1e5 * nu.GeV     # DM mass
-m_V = 0.1 * nu.keV    # mediator mass
-alpha_chi = 1
+m_V = 1 * nu.keV    # mediator mass
+alpha_chi = 0.1
 # Induced Equations
 omega = m_V / m_chi    # mass ratio
 g_chi = mp.sqrt(4 * mp.pi * alpha_chi)          # coupling constant
@@ -56,15 +56,11 @@ my_omega = omega / v_fid
 # sigma_0 takes a 1/m to be in the form of sigma/m like SIDM strength
 sigma_0 = g_chi**4 / 4 / mp.pi / m_chi**2 / omega**4 / m_chi
 my_sigma_0 = sigma_0 / sigma_fid
-# sigma_1 is g_chi^4/m_chi^3 - which is in similar form of sigma_0.
-sigma_1 = g_chi**4 / m_chi**3
-my_sigma_1 = sigma_1 / sigma_fid
 my_cs_type = "ruth"
 if_brem = True
 if_anni = False
 
 brem_prefactor = g_chi**6 / m_chi**3 / 96 / mp.power(mp.pi, 7/2) / sigma_fid / v_fid**2    # Need 1/v_fid**2 to balance the fiducial values.
-
 anni_prefactor = mp.sqrt(mp.pi) * alpha_chi**2  / 4 / m_chi**3 * rho_s * t_fid
 # rho**2 * anni_prefactor * anni_int = dM / dV / dt.  rho, M, V(=r^2 dr) and t are all normalized by fid values.
 
