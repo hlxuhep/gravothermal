@@ -36,7 +36,7 @@ SCAN_GRIDS = {
 
 # ----------------------
 # Default single-point tag (used when --mode single)
-my_tag = "brem_test_1"
+my_tag = "cluster_single_test"
 
 # ----------------------
 # Halo fiducials (dimensionful, in nu)
@@ -61,9 +61,9 @@ my_scale_norm = mp.mpf('0.1')
 
 # ----------------------
 # Default particle physics parameters (dimensionful in nu)
-m_chi = 1e5 * nu.GeV
-m_V = 1 * nu.keV
-alpha_chi = 0.1
+m_chi = 10 * nu.GeV
+m_V = 1e-3 * nu.keV
+alpha_chi = 0.01
 
 omega = m_V / m_chi
 g_chi = mp.sqrt(4 * mp.pi * alpha_chi)
@@ -307,7 +307,7 @@ def I_moll(v, w):
     down = y**3 * (2 + y)
     return top / down
 
-def big_int(vd, w , cs_type):
+def big_int(vd, w, cs_type):
     vd_mp = mp.mpf(vd)
     w_mp = mp.mpf(w)
 
@@ -324,6 +324,10 @@ def big_int(vd, w , cs_type):
 
     integral_val = mp.quad(integrand, [0, mp.inf])
     return 128 * integral_val
+
+def sigma_eff_in_nu(vd, w, cs_type):
+    bi = big_int(vd, w, cs_type)
+    return sigma_0 * bi / 512 / (nu.cm**2 / nu.gram)
 
 def luminosity_dm(r, a, c, my_sigma_0, w, mass_norm, ars, cs_type):
     r_val = mp.mpf(r)
@@ -392,6 +396,7 @@ def calculate_lists():
     vd_list = [vd_dm(r, my_mass_norm, my_scale_norm) for r in r_list2]
     u_list = [mp.mpf('1.5') * mp.re(v)**2 for v in vd_list]
     l_list = [luminosity_dm(r, a, c, my_sigma_0, my_omega, my_mass_norm, my_scale_norm, my_cs_type) for r in r_list1]
+    cs_list = [sigma_eff_in_nu(v, my_omega, my_cs_type) for v in vd_list]
 
     # Truncate to extra layers
     r_list1_trunc = r_list1[:layer]
@@ -401,6 +406,7 @@ def calculate_lists():
     u_list_trunc = u_list[:layer]
     vd_list_trunc = vd_list[:layer]
     l_list_trunc = l_list[:layer]
+    cs_list_trunc = cs_list[:layer]
 
     kn_list_trunc = [(1/(tot_cs_ruth(vd_list[i], my_omega) * my_sigma_0 * rho_list[i])) /
                      mp.sqrt((2 * u_list[i]) / (3 * rho_list[i]))
@@ -499,7 +505,8 @@ def calculate_lists():
         'vd_sample': vd_sample,
         'big_int_sample': big_int_sample,
         'brem_int_sample': brem_int_sample,
-        'anni_int_sample': anni_int_sample
+        'anni_int_sample': anni_int_sample,
+        'cs_list_trunc': cs_list_trunc   # export the effective cross section
     }
 
 def plot_results(results):
@@ -592,6 +599,7 @@ def export_data(results, tag=None):
 
     c_list_str = [f"{_clamp_subnormal_to_zero(c):.10g}" for c in results['c_list_trunc']] + ['']
     anni_list_str = [f"{_clamp_subnormal_to_zero(a):.10g}" for a in results['anni_list_trunc']] + ['']
+    cs_list_str = [f"{_clamp_subnormal_to_zero(cs):.10g}" for cs in results['cs_list_trunc']] + ['']
 
     def _write(name, lines):
         with open(os.path.join(output_dir, name), 'w') as f:
@@ -608,6 +616,7 @@ def export_data(results, tag=None):
     _write(f"aiList-{tag}.txt", anni_int_list_str)
     _write(f"CList-{tag}.txt", c_list_str)
     _write(f"AnniList-{tag}.txt", anni_list_str)
+    _write(f"sigmaeffList-{tag}.txt", cs_list_str)
 
     return output_dir
 
